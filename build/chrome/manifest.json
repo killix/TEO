@@ -1,0 +1,14 @@
+{
+  "manifest_version": 2,
+  "name": "teo-chrome",
+  "description":"TEO network stack in chrome.",
+  "version":"0.1",
+  "permissions":[
+	{"socket": ["udp-send-to:*:*","udp-bind"]}
+  ],
+  "app":{
+	"background":{
+	  "scripts":["background.js"]
+	}
+  }
+}

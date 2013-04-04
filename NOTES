@@ -1,6 +1,3 @@
-changes required in browserify:
-  builtins/__browserify_process.js
-  //browserified emscripten code detects nodejs environment, and requires process.stdout,stderr
-  process.stdout = {write:function(x){console.log(x)}};
-  process.stderr = {write:function(x){console.error(x)}};
-  process.exit = function(){}
+for now use browserify v1 implemented in:
+   https://github.com/mnaamani/node-browserify/tree/v1-emscripten
+
