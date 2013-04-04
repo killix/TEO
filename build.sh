@@ -8,7 +8,7 @@
 	cp chrome/src/dgram-chrome.js chrome/tmp/
 	cp chrome/src/exports.js chrome/tmp/
 	cp chrome/src/os-chrome.js chrome/tmp/os.js
-	browserify chrome/tmp/exports.js \
+	node node-browserify/bin/cmd.js chrome/tmp/exports.js \
                -r ./chrome/tmp/dgram-chrome.js:dgram \
                -r ./chrome/tmp/enet.js:enet \
                -r ./chrome/tmp/async.js:async \
