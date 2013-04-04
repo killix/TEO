@@ -23,11 +23,9 @@
                -r ./chrome/tmp/hash.js:hash \
                -r ./chrome/tmp/switch.js:switch \
                -r ./chrome/tmp/telehash:telehash \
-               -o ./build/chrome/chrome-bundle.js
+               -o ./build/chrome/teo-chrome.js
 	cp chrome/src/window.html build/chrome/
 	cp chrome/src/icon.png build/chrome/
 	cp chrome/src/manifest.json build/chrome/
 	cp chrome/src/background.js build/chrome/
 	cp chrome/src/main.js build/chrome/
-	cp chrome/src/otr-test.js build/chrome/
-	cp chrome/src/otr-test2.js build/chrome/

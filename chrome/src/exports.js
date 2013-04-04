@@ -13,26 +13,3 @@ TEO = {};
 TEO.telehash = require("telehash");
 TEO.enet = require("enet");
 TEO.otr = require("otr");
-
-/*
-var enet = require("enet");
-TEO.enet = {
-    Address:enet.Address,
-    Host:enet.Host,
-    Packet:enet.Packet,
-};
-
-
-var otr = require("otr");
-TEO.otr = {
-    MSGEVENT:otr.MSGEVENT,
-    POLICY:otr.POLICY,
-    ConnContext:otr.ConnContext,
-    Session:otr.Session,
-    User:otr.User,
-    VFS:otr.VFS,
-    version:otr.version,
-    debugOn:otr.debugOn,
-    debugOff:otr.debugOff    
-};
-*/
