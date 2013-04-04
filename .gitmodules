@@ -1,0 +1,9 @@
+[submodule "deps/telehash"]
+	path = deps/telehash
+	url = git://github.com/mnaamani/node-telehash.git
+[submodule "deps/enet"]
+	path = deps/enet
+	url = git://github.com/mnaamani/enet-npm.git
+[submodule "deps/otr4-em"]
+	path = deps/otr4-em
+	url = git://github.com/mnaamani/otr4-em.git
