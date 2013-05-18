@@ -372,6 +372,8 @@ exports.relative = function(from, to) {
   return outputParts.join('/');
 };
 
+exports.sep = '/';
+
 });
 
 require.define("__browserify_process",function(require,module,exports,__dirname,__filename,process,global){var process = module.exports = {};
@@ -4061,6 +4063,10 @@ require.define("libotr-js-bindings.js",function(require,module,exports,__dirname
     fs = require("fs");
     path = require("path");
     BigInt = require("./bigint.js");
+    var fs_existsSync = fs.existsSync || path.existsSync;
+    if(!path.sep){
+        path.sep = (process.platform.indexOf("win")==0) ? "\\":"/";
+    }
     module.exports = otrBindings;
 
   } else {
@@ -4651,7 +4657,7 @@ OtrlMessageAppOps.prototype.abortSMP = function(userstate,context){
 };
 
 OtrlMessageAppOps.prototype.extraSymKey = function(userstate,context,use,usedata){
-    //return ArrayBuffer(32) (256bit extra symmetric key)
+    //return ArrayBuffer() 32bytes in length (256bit extra symmetric key)
 
     var symkey_ptr = _malloc(32);//OTRL_EXTRAKEY_BYTES
     var symkey;
@@ -4661,7 +4667,6 @@ OtrlMessageAppOps.prototype.extraSymKey = function(userstate,context,use,usedata
     }
     var usedata_view = new Uint8Array(usedata);
     var usedata_ptr = _malloc(usedata_view.length);
-
     for(var i=0; i<usedata_view.length; i++){
         setValue(usedata_ptr+i,usedata_view[i],"i8");
     }
@@ -4670,7 +4675,6 @@ OtrlMessageAppOps.prototype.extraSymKey = function(userstate,context,use,usedata
 
     if(!err){
         symkey = helper_.ptr_to_ArrayBuffer(symkey_ptr,32);
-        //symkey = helper_.ptr_to_HexString(symkey_ptr,32);
     }
 
     _free(symkey_ptr);
@@ -4755,7 +4759,7 @@ function VirtualFileSystem ( file ) {
                 target_folder = libModule.FS.createPath("/",path_vfs(path.dirname(destination)),true,true);
             }
             if(target_folder){
-              if( fs.existsSync(source) ){
+              if( fs_existsSync(source) ){
                 data = fs.readFileSync(source);
                 data = decrypt ? decrypt(data) : data;
                 virtual_file = libModule.FS.createDataFile(target_folder,filename,data,true,true);
@@ -4775,7 +4779,7 @@ function VirtualFileSystem ( file ) {
         if(object){
             data = new Buffer(object.contents);
             data = encrypt ? encrypt(data) : data;
-            if(!fs.existsSync(path_real(path.dirname(destination)))) fs.mkdirSync(path_real(path.dirname(destination)));
+            if(!fs_existsSync(path_real(path.dirname(destination)))) fs.mkdirSync(path_real(path.dirname(destination)));
             fd = fs.openSync(destination,"w");
             fs.writeSync(fd,data,0,data.length,0);
             fs.closeSync(fd);        
@@ -6147,6 +6151,11 @@ Module['preRun'].push(function(){
                 delete udp_sockets[$socket];
             }
         };
+        __packet_filter = function(host_ptr){
+           var host = new ENetHost(host_ptr);
+           var addr = host.receivedAddress();
+           return global_packet_filter(addr.address(),addr.port());
+        }
 });//preRun
 // Note: For maximum-speed code, see "Optimizing Code" on the Emscripten wiki, https://github.com/kripken/emscripten/wiki/Optimizing-Code
 // Note: Some Emscripten settings may limit the speed of the generated code.
@@ -6372,6 +6381,11 @@ var Runtime = {
   }
   return ret;
 },
+  STACK_ALIGN: 4,
+  getAlignSize: function (type, size, vararg) {
+    // we align i64s and doubles on 64-bit boundaries, unlike x86
+    return Math.min(size || (type ? Runtime.getNativeFieldSize(type) : 0), Runtime.QUANTUM_SIZE);
+  },
   calculateStructAlignment: function calculateStructAlignment(type) {
     type.flatSize = 0;
     type.alignSize = 0;
@@ -6381,10 +6395,10 @@ var Runtime = {
       var size, alignSize;
       if (Runtime.isNumberType(field) || Runtime.isPointerType(field)) {
         size = Runtime.getNativeTypeSize(field); // pack char; char; in structs, also char[X]s.
-        alignSize = size;
+        alignSize = Runtime.getAlignSize(field, size);
       } else if (Runtime.isStructType(field)) {
         size = Types.types[field].flatSize;
-        alignSize = Types.types[field].alignSize;
+        alignSize = Runtime.getAlignSize(null, Types.types[field].alignSize);
       } else if (field[0] == 'b') {
         // bN, large number field, like a [N x i8]
         size = field.substr(1)|0;
@@ -6392,7 +6406,7 @@ var Runtime = {
       } else {
         throw 'Unclear type in struct: ' + field + ', in ' + type.name_ + ' :: ' + dump(Types.types[type.name_]);
       }
-      alignSize = type.packed ? 1 : Math.min(alignSize, Runtime.QUANTUM_SIZE);
+      if (type.packed) alignSize = 1;
       type.alignSize = Math.max(type.alignSize, alignSize);
       var curr = Runtime.alignMemory(type.flatSize, alignSize); // if necessary, place this on aligned memory
       type.flatSize = curr + size;
@@ -6454,16 +6468,15 @@ var Runtime = {
       return FUNCTION_TABLE[ptr]();
     }
   },
-  addFunction: function (func, sig) {
-    //assert(sig); // TODO: support asm
-    var table = FUNCTION_TABLE; // TODO: support asm
+  addFunction: function (func) {
+    var table = FUNCTION_TABLE;
     var ret = table.length;
     table.push(func);
     table.push(0);
     return ret;
   },
   removeFunction: function (index) {
-    var table = FUNCTION_TABLE; // TODO: support asm
+    var table = FUNCTION_TABLE;
     table[index] = null;
   },
   warnOnce: function (text) {
@@ -6478,7 +6491,7 @@ var Runtime = {
     assert(sig);
     if (!Runtime.funcWrappers[func]) {
       Runtime.funcWrappers[func] = function() {
-        Runtime.dynCall(sig, func, arguments);
+        return Runtime.dynCall(sig, func, arguments);
       };
     }
     return Runtime.funcWrappers[func];
@@ -6793,7 +6806,22 @@ var HEAP8, HEAPU8, HEAP16, HEAPU16, HEAP32, HEAPU32, HEAPF32, HEAPF64;
 var STACK_ROOT, STACKTOP, STACK_MAX;
 var STATICTOP;
 function enlargeMemory() {
-  abort('Cannot enlarge memory arrays. Either (1) compile with -s TOTAL_MEMORY=X with X higher than the current value, (2) compile with ALLOW_MEMORY_GROWTH which adjusts the size at runtime but prevents some optimizations, or (3) set Module.TOTAL_MEMORY before the program runs.');
+  // TOTAL_MEMORY is the current size of the actual array, and STATICTOP is the new top.
+  while (TOTAL_MEMORY <= STATICTOP) { // Simple heuristic. Override enlargeMemory() if your program has something more optimal for it
+    TOTAL_MEMORY = alignMemoryPage(2*TOTAL_MEMORY);
+  }
+  assert(TOTAL_MEMORY <= Math.pow(2, 30)); // 2^30==1GB is a practical maximum - 2^31 is already close to possible negative numbers etc.
+  var oldHEAP8 = HEAP8;
+  var buffer = new ArrayBuffer(TOTAL_MEMORY);
+  Module['HEAP8'] = HEAP8 = new Int8Array(buffer);
+  Module['HEAP16'] = HEAP16 = new Int16Array(buffer);
+  Module['HEAP32'] = HEAP32 = new Int32Array(buffer);
+  Module['HEAPU8'] = HEAPU8 = new Uint8Array(buffer);
+  Module['HEAPU16'] = HEAPU16 = new Uint16Array(buffer);
+  Module['HEAPU32'] = HEAPU32 = new Uint32Array(buffer);
+  Module['HEAPF32'] = HEAPF32 = new Float32Array(buffer);
+  Module['HEAPF64'] = HEAPF64 = new Float64Array(buffer);
+  HEAP8.set(oldHEAP8);
 }
 var TOTAL_STACK = Module['TOTAL_STACK'] || 409600;
 var TOTAL_MEMORY = Module['TOTAL_MEMORY'] || 1048576;
@@ -7082,7 +7110,7 @@ _vwarn = 24;
 _vwarnx = 22;
 }
 if (!awaitingMemoryInitializer) runPostSets();
-var __packet_filter; // stub for __packet_filter
+  var __packet_filter=undefined;
   function _memcpy(dest, src, num) {
       dest = dest|0; src = src|0; num = num|0;
       var ret = 0;
@@ -7157,7 +7185,7 @@ var __packet_filter; // stub for __packet_filter
     }
   var _ntohl=_htonl;
   var _ntohs=_htons;
-  var ERRNO_CODES={E2BIG:7,EACCES:13,EADDRINUSE:98,EADDRNOTAVAIL:99,EAFNOSUPPORT:97,EAGAIN:11,EALREADY:114,EBADF:9,EBADMSG:74,EBUSY:16,ECANCELED:125,ECHILD:10,ECONNABORTED:103,ECONNREFUSED:111,ECONNRESET:104,EDEADLK:35,EDESTADDRREQ:89,EDOM:33,EDQUOT:122,EEXIST:17,EFAULT:14,EFBIG:27,EHOSTUNREACH:113,EIDRM:43,EILSEQ:84,EINPROGRESS:115,EINTR:4,EINVAL:22,EIO:5,EISCONN:106,EISDIR:21,ELOOP:40,EMFILE:24,EMLINK:31,EMSGSIZE:90,EMULTIHOP:72,ENAMETOOLONG:36,ENETDOWN:100,ENETRESET:102,ENETUNREACH:101,ENFILE:23,ENOBUFS:105,ENODATA:61,ENODEV:19,ENOENT:2,ENOEXEC:8,ENOLCK:37,ENOLINK:67,ENOMEM:12,ENOMSG:42,ENOPROTOOPT:92,ENOSPC:28,ENOSR:63,ENOSTR:60,ENOSYS:38,ENOTCONN:107,ENOTDIR:20,ENOTEMPTY:39,ENOTRECOVERABLE:131,ENOTSOCK:88,ENOTSUP:95,ENOTTY:25,ENXIO:6,EOVERFLOW:75,EOWNERDEAD:130,EPERM:1,EPIPE:32,EPROTO:71,EPROTONOSUPPORT:93,EPROTOTYPE:91,ERANGE:34,EROFS:30,ESPIPE:29,ESRCH:3,ESTALE:116,ETIME:62,ETIMEDOUT:110,ETXTBSY:26,EWOULDBLOCK:11,EXDEV:18};
+  var ERRNO_CODES={E2BIG:7,EACCES:13,EADDRINUSE:98,EADDRNOTAVAIL:99,EAFNOSUPPORT:97,EAGAIN:11,EALREADY:114,EBADF:9,EBADMSG:74,EBUSY:16,ECANCELED:125,ECHILD:10,ECONNABORTED:103,ECONNREFUSED:111,ECONNRESET:104,EDEADLK:35,EDESTADDRREQ:89,EDOM:33,EDQUOT:122,EEXIST:17,EFAULT:14,EFBIG:27,EHOSTUNREACH:113,EIDRM:43,EILSEQ:84,EINPROGRESS:115,EINTR:4,EINVAL:22,EIO:5,EISCONN:106,EISDIR:21,ELOOP:40,EMFILE:24,EMLINK:31,EMSGSIZE:90,EMULTIHOP:72,ENAMETOOLONG:36,ENETDOWN:100,ENETRESET:102,ENETUNREACH:101,ENFILE:23,ENOBUFS:105,ENODATA:61,ENODEV:19,ENOENT:2,ENOEXEC:8,ENOLCK:37,ENOLINK:67,ENOMEM:12,ENOMSG:42,ENOPROTOOPT:92,ENOSPC:28,ENOSR:63,ENOSTR:60,ENOSYS:38,ENOTCONN:107,ENOTDIR:20,ENOTEMPTY:39,ENOTRECOVERABLE:131,ENOTSOCK:88,ENOTSUP:95,ENOTTY:25,ENXIO:6,EOPNOTSUPP:45,EOVERFLOW:75,EOWNERDEAD:130,EPERM:1,EPIPE:32,EPROTO:71,EPROTONOSUPPORT:93,EPROTOTYPE:91,ERANGE:34,EROFS:30,ESPIPE:29,ESRCH:3,ESTALE:116,ETIME:62,ETIMEDOUT:110,ETXTBSY:26,EWOULDBLOCK:11,EXDEV:18};
   function ___setErrNo(value) {
       // For convenient setting and returning of errno.
       if (!___setErrNo.ret) ___setErrNo.ret = allocate([0], 'i32', ALLOC_STATIC);
@@ -7567,7 +7595,7 @@ var __packet_filter; // stub for __packet_filter
           eof: false,
           ungotten: []
         };
-        assert(Math.max(_stdin, _stdout, _stderr) < 128); // make sure these are low, we flatten arrays with these
+        assert(Math.max(_stdin, _stdout, _stderr) < 1024); // make sure these are low, we flatten arrays with these
         HEAP32[((_stdin)>>2)]=1;
         HEAP32[((_stdout)>>2)]=2;
         HEAP32[((_stderr)>>2)]=3;
@@ -7664,7 +7692,7 @@ var __packet_filter; // stub for __packet_filter
       ptr = ptr|0;
       var curr = 0;
       curr = ptr;
-      while (HEAP8[(curr)]|0 != 0) {
+      while (HEAP8[(curr)]) {
         curr = (curr + 1)|0;
       }
       return (curr - ptr)|0;
@@ -7698,7 +7726,7 @@ var __packet_filter; // stub for __packet_filter
         return (newlineRet < 0) ? -1 : ret + 1;
       }
     }
-  var ERRNO_MESSAGES={1:"Operation not permitted",2:"No such file or directory",3:"No such process",4:"Interrupted system call",5:"Input/output error",6:"No such device or address",8:"Exec format error",9:"Bad file descriptor",10:"No child processes",11:"Resource temporarily unavailable",12:"Cannot allocate memory",13:"Permission denied",14:"Bad address",16:"Device or resource busy",17:"File exists",18:"Invalid cross-device link",19:"No such device",20:"Not a directory",21:"Is a directory",22:"Invalid argument",23:"Too many open files in system",24:"Too many open files",25:"Inappropriate ioctl for device",26:"Text file busy",27:"File too large",28:"No space left on device",29:"Illegal seek",30:"Read-only file system",31:"Too many links",32:"Broken pipe",33:"Numerical argument out of domain",34:"Numerical result out of range",35:"Resource deadlock avoided",36:"File name too long",37:"No locks available",38:"Function not implemented",39:"Directory not empty",40:"Too many levels of symbolic links",42:"No message of desired type",43:"Identifier removed",60:"Device not a stream",61:"No data available",62:"Timer expired",63:"Out of streams resources",67:"Link has been severed",71:"Protocol error",72:"Multihop attempted",74:"Bad message",75:"Value too large for defined data type",84:"Invalid or incomplete multibyte or wide character",88:"Socket operation on non-socket",89:"Destination address required",90:"Message too long",91:"Protocol wrong type for socket",92:"Protocol not available",93:"Protocol not supported",95:"Operation not supported",97:"Address family not supported by protocol",98:"Address already in use",99:"Cannot assign requested address",100:"Network is down",101:"Network is unreachable",102:"Network dropped connection on reset",103:"Software caused connection abort",104:"Connection reset by peer",105:"No buffer space available",106:"Transport endpoint is already connected",107:"Transport endpoint is not connected",110:"Connection timed out",111:"Connection refused",113:"No route to host",114:"Operation already in progress",115:"Operation now in progress",116:"Stale NFS file handle",122:"Disk quota exceeded",125:"Operation canceled",130:"Owner died",131:"State not recoverable"};function _strerror_r(errnum, strerrbuf, buflen) {
+  var ERRNO_MESSAGES={1:"Operation not permitted",2:"No such file or directory",3:"No such process",4:"Interrupted system call",5:"Input/output error",6:"No such device or address",8:"Exec format error",9:"Bad file descriptor",10:"No child processes",11:"Resource temporarily unavailable",12:"Cannot allocate memory",13:"Permission denied",14:"Bad address",16:"Device or resource busy",17:"File exists",18:"Invalid cross-device link",19:"No such device",20:"Not a directory",21:"Is a directory",22:"Invalid argument",23:"Too many open files in system",24:"Too many open files",25:"Inappropriate ioctl for device",26:"Text file busy",27:"File too large",28:"No space left on device",29:"Illegal seek",30:"Read-only file system",31:"Too many links",32:"Broken pipe",33:"Numerical argument out of domain",34:"Numerical result out of range",35:"Resource deadlock avoided",36:"File name too long",37:"No locks available",38:"Function not implemented",39:"Directory not empty",40:"Too many levels of symbolic links",42:"No message of desired type",43:"Identifier removed",45:"Op not supported on transport endpoint",60:"Device not a stream",61:"No data available",62:"Timer expired",63:"Out of streams resources",67:"Link has been severed",71:"Protocol error",72:"Multihop attempted",74:"Bad message",75:"Value too large for defined data type",84:"Invalid or incomplete multibyte or wide character",88:"Socket operation on non-socket",89:"Destination address required",90:"Message too long",91:"Protocol wrong type for socket",92:"Protocol not available",93:"Protocol not supported",95:"Operation not supported",97:"Address family not supported by protocol",98:"Address already in use",99:"Cannot assign requested address",100:"Network is down",101:"Network is unreachable",102:"Network dropped connection on reset",103:"Software caused connection abort",104:"Connection reset by peer",105:"No buffer space available",106:"Transport endpoint is already connected",107:"Transport endpoint is not connected",110:"Connection timed out",111:"Connection refused",113:"No route to host",114:"Operation already in progress",115:"Operation now in progress",116:"Stale NFS file handle",122:"Disk quota exceeded",125:"Operation canceled",130:"Owner died",131:"State not recoverable"};function _strerror_r(errnum, strerrbuf, buflen) {
       if (errnum in ERRNO_MESSAGES) {
         if (ERRNO_MESSAGES[errnum].length > buflen - 1) {
           return ___setErrNo(ERRNO_CODES.ERANGE);
@@ -7800,7 +7828,7 @@ var __packet_filter; // stub for __packet_filter
       }
       return pdest|0;
     }
-var _gethostbyaddr; // stub for _gethostbyaddr
+  var _gethostbyaddr=undefined;
   var Sockets={BACKEND_WEBSOCKETS:0,BACKEND_WEBRTC:1,BUFFER_SIZE:10240,MAX_BUFFER_SIZE:10485760,backend:0,nextFd:1,fds:{},sockaddr_in_layout:{__size__:20,sin_family:0,sin_port:4,sin_addr:8,sin_zero:12,sin_zero_b:16},msghdr_layout:{__size__:28,msg_name:0,msg_namelen:4,msg_iov:8,msg_iovlen:12,msg_control:16,msg_controllen:20,msg_flags:24},backends:{0:{connect:function (info) {
             console.log('opening ws://' + info.host + ':' + info.port);
             info.socket = new WebSocket('ws://' + info.host + ':' + info.port, ['binary']);
@@ -7897,7 +7925,13 @@ var _gethostbyaddr; // stub for _gethostbyaddr
         info.host = _gethostbyname.table[low + 0xff*high];
         assert(info.host, 'problem translating fake ip ' + parts);
       }
-      Sockets.backends[Sockets.backend].connect(info);
+      try {
+        Sockets.backends[Sockets.backend].connect(info);
+      } catch(e) {
+        Module.printErr('Error in connect(): ' + e);
+        ___setErrNo(ERRNO_CODES.EACCES);
+        return -1;
+      }
       return 0;
     }function _bind(fd, addr, addrlen) {
       return _connect(fd, addr, addrlen);
@@ -8134,7 +8168,7 @@ var _gethostbyaddr; // stub for _gethostbyaddr
           type = 'i32'; // varargs are always i32, i64, or double
           ret = HEAP32[(((varargs)+(argIndex))>>2)];
         }
-        argIndex += Runtime.getNativeFieldSize(type);
+        argIndex += Math.max(Runtime.getNativeFieldSize(type), Runtime.getAlignSize(type, null, true));
         return ret;
       }
       var ret = [];
@@ -8884,8 +8918,9 @@ var _gethostbyaddr; // stub for _gethostbyaddr
       }
       return 0;
     }
+  var _llvm_va_start=undefined;
   function _llvm_va_end() {}
-var _warn; // stub for _warn
+  var _warn=undefined;
   var _vfprintf=_fprintf;
   function __exit(status) {
       // void _exit(int status);
@@ -9271,6 +9306,10 @@ function _jsapi_packet_get_data(r1) {
 function _jsapi_packet_get_dataLength(r1) {
   return HEAP32[r1 + 12 >> 2];
 }
+function _jsapi_packet_set_free_callback(r1, r2) {
+  HEAP32[r1 + 16 >> 2] = r2;
+  return;
+}
 function _jsapi_host_get_receivedAddress(r1) {
   return r1 + 10348 | 0;
 }
@@ -9317,17 +9356,17 @@ function _enet_initialize_with_callbacks(r1, r2) {
         r4 = -1;
       } else {
         r7 = r6;
-        r3 = 23;
+        r3 = 24;
         break;
       }
       return r4;
     } else {
       r7 = r5;
-      r3 = 23;
+      r3 = 24;
     }
   } while (0);
   do {
-    if (r3 == 23) {
+    if (r3 == 24) {
       r5 = r2 + 4 | 0;
       if ((HEAP32[r5 >> 2] | 0) == 0) {
         r4 = -1;
@@ -9483,7 +9522,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
   r4 = r2 + 8 | 0;
   r2 = r3 - 1 | 0;
   r3 = r5;
-  L71 : while (1) {
+  L72 : while (1) {
     if (r6 >>> 0 < r26 >>> 0) {
       r27 = r26;
       r28 = r6;
@@ -9491,7 +9530,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
       r30 = r2;
     } else {
       if ((r2 | 0) == 0) {
-        r7 = 66;
+        r7 = 67;
         break;
       }
       r31 = HEAP32[r4 >> 2];
@@ -9504,14 +9543,14 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
     r32 = HEAP8[r28];
     r33 = HEAPU16[r10];
     r34 = (r33 << 4) + r13 | 0;
-    L77 : do {
+    L78 : do {
       if ((r34 | 0) == (r15 | 0)) {
         r35 = r3;
         r36 = r25;
         r37 = r24;
         r38 = r22;
         r39 = r9;
-        r7 = 102;
+        r7 = 103;
       } else {
         r40 = r3;
         r41 = r25;
@@ -9544,9 +9583,9 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
             } else {
               r49 = ((r48 & 65535) + r45 << 4) + r13 | 0;
               r50 = 0;
-              L83 : while (1) {
+              L84 : while (1) {
                 r55 = HEAP8[r49 | 0];
-                L85 : do {
+                L86 : do {
                   if ((r32 & 255) < (r55 & 255)) {
                     r56 = r49;
                     while (1) {
@@ -9555,8 +9594,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                       r58 = r56 + 4 | 0;
                       r57 = HEAP16[r58 >> 1];
                       if (r57 << 16 >> 16 == 0) {
-                        r7 = 75;
-                        break L83;
+                        r7 = 76;
+                        break L84;
                       }
                       r59 = ((r57 & 65535) << 4) + r56 | 0;
                       r57 = HEAP8[r59 | 0];
@@ -9565,7 +9604,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                       } else {
                         r60 = r59;
                         r61 = r57;
-                        break L85;
+                        break L86;
                       }
                     }
                   } else {
@@ -9574,20 +9613,20 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                   }
                 } while (0);
                 if ((r32 & 255) <= (r61 & 255)) {
-                  r7 = 80;
+                  r7 = 81;
                   break;
                 }
                 r62 = HEAP16[r60 + 2 >> 1] + r50 & 65535;
                 r63 = r60 + 6 | 0;
                 r55 = HEAP16[r63 >> 1];
                 if (r55 << 16 >> 16 == 0) {
-                  r7 = 79;
+                  r7 = 80;
                   break;
                 }
                 r49 = ((r55 & 65535) << 4) + r60 | 0;
                 r50 = r62;
               }
-              if (r7 == 75) {
+              if (r7 == 76) {
                 r7 = 0;
                 r49 = (r43 << 4) + r13 | 0;
                 HEAP8[r49 | 0] = r32;
@@ -9606,7 +9645,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                 r53 = r49;
                 r54 = r43 + 1 | 0;
                 break;
-              } else if (r7 == 79) {
+              } else if (r7 == 80) {
                 r7 = 0;
                 r49 = (r43 << 4) + r13 | 0;
                 HEAP8[r49 | 0] = r32;
@@ -9625,7 +9664,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                 r53 = r49;
                 r54 = r43 + 1 | 0;
                 break;
-              } else if (r7 == 80) {
+              } else if (r7 == 81) {
                 r7 = 0;
                 r49 = r60 + 1 | 0;
                 r55 = HEAPU8[r49];
@@ -9646,7 +9685,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
           r55 = ((r45 << 4) + r13 + 12 | 0) >> 1;
           r59 = HEAP16[r55];
           r49 = (r52 | 0) != 0;
-          L97 : do {
+          L98 : do {
             if (r49) {
               r57 = Math.floor((r42 >>> 0) / ((r59 & 65535) >>> 0));
               r64 = Math.imul(HEAPU16[((r45 << 4) + 10 >> 1) + r14] + (r51 & 65535) | 0, r57) + r41 | 0;
@@ -9659,7 +9698,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                     r66 = r65;
                     r67 = r57;
                     r68 = r64;
-                    break L97;
+                    break L98;
                   }
                   r69 = -r57 & 65535;
                 } else {
@@ -9667,8 +9706,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                 }
                 if (r64 >>> 0 >= r11 >>> 0) {
                   r12 = 0;
-                  r7 = 134;
-                  break L71;
+                  r7 = 135;
+                  break L72;
                 }
                 HEAP8[r64] = r57 >>> 24 & 255;
                 r65 = r69 << 8;
@@ -9678,7 +9717,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
             } else {
               r64 = ((r45 << 4) + r13 + 10 | 0) >> 1;
               r57 = HEAP16[r64];
-              L107 : do {
+              L108 : do {
                 if (r57 << 16 >> 16 != 0 & (r57 & 65535) < (r59 & 65535)) {
                   r65 = Math.imul(Math.floor((r42 >>> 0) / ((r59 & 65535) >>> 0)), r57 & 65535);
                   r50 = r41;
@@ -9689,7 +9728,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                         r71 = r65;
                         r72 = r50;
                         r73 = r70;
-                        break L107;
+                        break L108;
                       }
                       r74 = -r50 & 65535;
                     } else {
@@ -9697,8 +9736,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                     }
                     if (r70 >>> 0 >= r11 >>> 0) {
                       r12 = 0;
-                      r7 = 135;
-                      break L71;
+                      r7 = 136;
+                      break L72;
                     }
                     HEAP8[r70] = r50 >>> 24 & 255;
                     r65 = r74 << 8;
@@ -9739,7 +9778,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
             r77 = r66;
             r78 = r67;
             r79 = r68;
-            break L77;
+            break L78;
           }
           r70 = HEAPU16[((r45 << 4) + 14 >> 1) + r14];
           r59 = (r70 << 4) + r13 | 0;
@@ -9749,8 +9788,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
             r37 = r66;
             r38 = r54;
             r39 = r48;
-            r7 = 102;
-            break L77;
+            r7 = 103;
+            break L78;
           } else {
             r40 = r68;
             r41 = r67;
@@ -9764,7 +9803,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
       }
     } while (0);
     do {
-      if (r7 == 102) {
+      if (r7 == 103) {
         r7 = 0;
         r34 = r32 & 255;
         r33 = HEAP16[r16];
@@ -9789,9 +9828,9 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
           } else {
             r46 = ((r33 & 65535) << 4) + r15 | 0;
             r45 = r34;
-            L130 : while (1) {
+            L131 : while (1) {
               r44 = HEAP8[r46 | 0];
-              L132 : do {
+              L133 : do {
                 if ((r32 & 255) < (r44 & 255)) {
                   r84 = r46;
                   while (1) {
@@ -9800,8 +9839,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                     r85 = r84 + 4 | 0;
                     r43 = HEAP16[r85 >> 1];
                     if (r43 << 16 >> 16 == 0) {
-                      r7 = 108;
-                      break L130;
+                      r7 = 109;
+                      break L131;
                     }
                     r42 = ((r43 & 65535) << 4) + r84 | 0;
                     r43 = HEAP8[r42 | 0];
@@ -9810,7 +9849,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                     } else {
                       r86 = r42;
                       r87 = r43;
-                      break L132;
+                      break L133;
                     }
                   }
                 } else {
@@ -9819,20 +9858,20 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
                 }
               } while (0);
               if ((r32 & 255) <= (r87 & 255)) {
-                r7 = 113;
+                r7 = 114;
                 break;
               }
               r88 = HEAP16[r86 + 2 >> 1] + r45 & 65535;
               r89 = r86 + 6 | 0;
               r44 = HEAP16[r89 >> 1];
               if (r44 << 16 >> 16 == 0) {
-                r7 = 112;
+                r7 = 113;
                 break;
               }
               r46 = ((r44 & 65535) << 4) + r86 | 0;
               r45 = r88;
             }
-            if (r7 == 108) {
+            if (r7 == 109) {
               r7 = 0;
               r46 = (r38 << 4) + r13 | 0;
               HEAP8[r46 | 0] = r32;
@@ -9851,7 +9890,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
               r82 = r46;
               r83 = r38 + 1 | 0;
               break;
-            } else if (r7 == 112) {
+            } else if (r7 == 113) {
               r7 = 0;
               r46 = (r38 << 4) + r13 | 0;
               HEAP8[r46 | 0] = r32;
@@ -9870,7 +9909,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
               r82 = r46;
               r83 = r38 + 1 | 0;
               break;
-            } else if (r7 == 113) {
+            } else if (r7 == 114) {
               r7 = 0;
               r46 = r86 + 1 | 0;
               r48 = HEAPU8[r46];
@@ -9903,8 +9942,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
           }
           if (r33 >>> 0 >= r11 >>> 0) {
             r12 = 0;
-            r7 = 136;
-            break L71;
+            r7 = 137;
+            break L72;
           }
           HEAP8[r33] = r34 >>> 24 & 255;
           r48 = r90 << 8;
@@ -9970,8 +10009,8 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
     r2 = r30;
     r3 = r79;
   }
-  if (r7 == 66) {
-    L164 : do {
+  if (r7 == 67) {
+    L165 : do {
       if ((r25 | 0) == 0) {
         r93 = r3;
       } else {
@@ -9987,7 +10026,7 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
           r29 = r30 << 8;
           if ((r29 | 0) == 0) {
             r93 = r2;
-            break L164;
+            break L165;
           } else {
             r79 = r2;
             r30 = r29;
@@ -10000,13 +10039,13 @@ function _enet_range_coder_compress(r1, r2, r3, r4, r5, r6) {
     r12 = r93 - r5 | 0;
     STACKTOP = r8;
     return r12;
-  } else if (r7 == 134) {
-    STACKTOP = r8;
-    return r12;
   } else if (r7 == 135) {
     STACKTOP = r8;
     return r12;
   } else if (r7 == 136) {
+    STACKTOP = r8;
+    return r12;
+  } else if (r7 == 137) {
     STACKTOP = r8;
     return r12;
   }
@@ -10024,7 +10063,8 @@ function _enet_symbol_rescale(r1) {
     HEAP16[r1] = r5 & 255;
     r5 = HEAP16[r3 + 4 >> 1];
     if (r5 << 16 >> 16 != 0) {
-      HEAP16[r1] = _enet_symbol_rescale(((r5 & 65535) << 4) + r3 | 0) + HEAP16[r1] & 65535;
+      r4 = _enet_symbol_rescale(((r5 & 65535) << 4) + r3 | 0);
+      HEAP16[r1] = HEAP16[r1] + r4 & 65535;
     }
     r6 = HEAPU16[r1] + r2 | 0;
     r1 = HEAP16[r3 + 6 >> 1];
@@ -10098,17 +10138,17 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
   r3 = 0;
   r26 = -1;
   r27 = r25;
-  L198 : while (1) {
+  L199 : while (1) {
     r25 = HEAP16[r9];
     r28 = r25 & 65535;
-    L200 : do {
+    L201 : do {
       if (((r28 << 4) + r12 | 0) == (r14 | 0)) {
         r29 = r27;
         r30 = r26;
         r31 = r18;
         r32 = r19;
         r33 = r25;
-        r6 = 186;
+        r6 = 187;
       } else {
         r34 = r27;
         r35 = r26;
@@ -10116,11 +10156,11 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
         r37 = r19;
         r38 = r25;
         r39 = r28;
-        L201 : while (1) {
+        L202 : while (1) {
           r40 = ((r39 << 4) + r12 + 10 | 0) >> 1;
           r41 = HEAP16[r40];
           r42 = r41 & 65535;
-          L203 : do {
+          L204 : do {
             if (r41 << 16 >> 16 == 0) {
               r43 = r37;
               r44 = r36;
@@ -10139,7 +10179,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
               r49 = Math.floor((r35 >>> 0) / ((r48 & 65535) >>> 0));
               r50 = Math.floor(((r34 - r36 | 0) >>> 0) / (r49 >>> 0));
               if ((r50 & 65535) >>> 0 >= r42 >>> 0) {
-                break L201;
+                break L202;
               }
               r48 = r37;
               r51 = r36;
@@ -10152,7 +10192,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                     r44 = r51;
                     r45 = r52;
                     r46 = r53;
-                    break L203;
+                    break L204;
                   }
                   r54 = -r51 & 65535;
                 } else {
@@ -10181,8 +10221,8 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
             r31 = r44;
             r32 = r43;
             r33 = r41;
-            r6 = 186;
-            break L200;
+            r6 = 187;
+            break L201;
           } else {
             r34 = r46;
             r35 = r45;
@@ -10196,18 +10236,18 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
         r53 = HEAP16[r35 >> 1];
         if (r53 << 16 >> 16 == 0) {
           r11 = 0;
-          r6 = 243;
-          break L198;
+          r6 = 244;
+          break L199;
         }
         r41 = r50 - r42 & 65535;
         r52 = ((r53 & 65535) + r39 << 4) + r12 | 0;
         r53 = 0;
-        L219 : while (1) {
+        L220 : while (1) {
           r51 = r52 + 2 | 0;
           r48 = HEAP16[r51 >> 1];
           r55 = r48 + r53 & 65535;
           r58 = r55 & 65535;
-          L221 : do {
+          L222 : do {
             if (r41 >>> 0 < r58 >>> 0) {
               r59 = r51;
               r60 = r48;
@@ -10221,13 +10261,13 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                 r67 = r62 - r66 | 0;
                 HEAP16[r59 >> 1] = r60 + 2 & 65535;
                 if ((r41 | 0) >= (r67 | 0)) {
-                  break L219;
+                  break L220;
                 }
                 r68 = HEAP16[r61 + 4 >> 1];
                 if (r68 << 16 >> 16 == 0) {
                   r11 = 0;
-                  r6 = 245;
-                  break L198;
+                  r6 = 246;
+                  break L199;
                 }
                 r69 = r68 & 65535;
                 r68 = (r69 << 4) + r61 | 0;
@@ -10243,7 +10283,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                 } else {
                   r73 = r68;
                   r74 = r71;
-                  break L221;
+                  break L222;
                 }
               }
             } else {
@@ -10254,8 +10294,8 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
           r55 = HEAP16[r73 + 6 >> 1];
           if (r55 << 16 >> 16 == 0) {
             r11 = 0;
-            r6 = 244;
-            break L198;
+            r6 = 245;
+            break L199;
           }
           r52 = ((r55 & 65535) << 4) + r73 | 0;
           r53 = r74;
@@ -10325,14 +10365,14 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
       }
     } while (0);
     do {
-      if (r6 == 186) {
+      if (r6 == 187) {
         r6 = 0;
         r87 = Math.floor((r30 >>> 0) / (HEAPU16[r17] >>> 0));
         r28 = Math.floor(((r29 - r31 | 0) >>> 0) / (r87 >>> 0));
         r88 = HEAPU16[r16];
         if ((r28 & 65535) >>> 0 < r88 >>> 0) {
-          r6 = 187;
-          break L198;
+          r6 = 188;
+          break L199;
         }
         r25 = r28 - r88 | 0;
         r28 = HEAP16[r15];
@@ -10360,7 +10400,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
             r37 = r25 & 65535;
             r34 = ((r28 & 65535) << 4) + r14 | 0;
             r36 = 0;
-            L249 : while (1) {
+            L250 : while (1) {
               r48 = r34 + 2 | 0;
               r51 = HEAP16[r48 >> 1];
               r62 = (r51 & 65535) + r36 | 0;
@@ -10369,7 +10409,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
               r71 = (r59 & 255) + 1 | 0;
               r68 = r71 + r62 | 0;
               r72 = r68 & 65535;
-              L251 : do {
+              L252 : do {
                 if (r37 >>> 0 < r72 >>> 0) {
                   r69 = r48;
                   r70 = r51;
@@ -10383,14 +10423,14 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                     r100 = r97 - r99 | 0;
                     HEAP16[r69 >> 1] = r70 + 3 & 65535;
                     if ((r37 | 0) >= (r100 | 0)) {
-                      r6 = 203;
-                      break L249;
+                      r6 = 204;
+                      break L250;
                     }
                     r101 = r96 + 4 | 0;
                     r102 = HEAP16[r101 >> 1];
                     if (r102 << 16 >> 16 == 0) {
-                      r6 = 202;
-                      break L249;
+                      r6 = 203;
+                      break L250;
                     }
                     r103 = r102 & 65535;
                     r102 = (r103 << 4) + r96 | 0;
@@ -10414,7 +10454,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                       r112 = r105;
                       r113 = r108;
                       r114 = r109;
-                      break L251;
+                      break L252;
                     }
                   }
                 } else {
@@ -10427,13 +10467,13 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
               r115 = r111 + 6 | 0;
               r68 = HEAP16[r115 >> 1];
               if (r68 << 16 >> 16 == 0) {
-                r6 = 198;
+                r6 = 199;
                 break;
               }
               r34 = ((r68 & 65535) << 4) + r111 | 0;
               r36 = r112 & 65535;
             }
-            if (r6 == 198) {
+            if (r6 == 199) {
               r6 = 0;
               r36 = r113 + r25 - r114 & 255;
               r34 = (r2 << 4) + r12 | 0;
@@ -10454,7 +10494,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
               r92 = r34;
               r93 = r2 + 1 | 0;
               break;
-            } else if (r6 == 202) {
+            } else if (r6 == 203) {
               r6 = 0;
               r34 = r25 - r100 + HEAPU8[r94] & 255;
               r36 = (r2 << 4) + r12 | 0;
@@ -10475,7 +10515,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
               r92 = r36;
               r93 = r2 + 1 | 0;
               break;
-            } else if (r6 == 203) {
+            } else if (r6 == 204) {
               r6 = 0;
               HEAP8[r98] = HEAP8[r98] + 3 & 255;
               r89 = r99;
@@ -10550,7 +10590,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
       }
     } while (0);
     r41 = HEAP16[r9];
-    L278 : do {
+    L279 : do {
       if (r41 << 16 >> 16 == r85 << 16 >> 16) {
         r120 = r82;
         r121 = r8;
@@ -10581,9 +10621,9 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
               r124 = r39 + 1 | 0;
             } else {
               r68 = ((r34 & 65535) + r53 << 4) + r12 | 0;
-              L284 : while (1) {
+              L285 : while (1) {
                 r71 = HEAP8[r68 | 0];
-                L286 : do {
+                L287 : do {
                   if ((r81 & 255) < (r71 & 255)) {
                     r125 = r68;
                     while (1) {
@@ -10592,8 +10632,8 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                       r126 = r125 + 4 | 0;
                       r62 = HEAP16[r126 >> 1];
                       if (r62 << 16 >> 16 == 0) {
-                        r6 = 222;
-                        break L284;
+                        r6 = 223;
+                        break L285;
                       }
                       r72 = ((r62 & 65535) << 4) + r125 | 0;
                       r62 = HEAP8[r72 | 0];
@@ -10602,7 +10642,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                       } else {
                         r127 = r72;
                         r128 = r62;
-                        break L286;
+                        break L287;
                       }
                     }
                   } else {
@@ -10611,18 +10651,18 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                   }
                 } while (0);
                 if ((r81 & 255) <= (r128 & 255)) {
-                  r6 = 227;
+                  r6 = 228;
                   break;
                 }
                 r129 = r127 + 6 | 0;
                 r71 = HEAP16[r129 >> 1];
                 if (r71 << 16 >> 16 == 0) {
-                  r6 = 226;
+                  r6 = 227;
                   break;
                 }
                 r68 = ((r71 & 65535) << 4) + r127 | 0;
               }
-              if (r6 == 222) {
+              if (r6 == 223) {
                 r6 = 0;
                 r68 = (r39 << 4) + r12 | 0;
                 HEAP8[r68 | 0] = r81;
@@ -10640,7 +10680,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                 r123 = r68;
                 r124 = r39 + 1 | 0;
                 break;
-              } else if (r6 == 226) {
+              } else if (r6 == 227) {
                 r6 = 0;
                 r68 = (r39 << 4) + r12 | 0;
                 HEAP8[r68 | 0] = r81;
@@ -10658,7 +10698,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
                 r123 = r68;
                 r124 = r39 + 1 | 0;
                 break;
-              } else if (r6 == 227) {
+              } else if (r6 == 228) {
                 r6 = 0;
                 r68 = r127 + 1 | 0;
                 r71 = HEAPU8[r68];
@@ -10701,7 +10741,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
           if (r37 << 16 >> 16 == r85 << 16 >> 16) {
             r120 = r124;
             r121 = r34;
-            break L278;
+            break L279;
           } else {
             r39 = r124;
             r52 = r34;
@@ -10713,7 +10753,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
     HEAP16[r121 >> 1] = r80;
     if (r24 >>> 0 >= r10 >>> 0) {
       r11 = 0;
-      r6 = 247;
+      r6 = 248;
       break;
     }
     r41 = r24 + 1 | 0;
@@ -10747,7 +10787,7 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
     r26 = r83;
     r27 = r84;
   }
-  if (r6 == 187) {
+  if (r6 == 188) {
     r84 = r32;
     r32 = r31;
     r31 = Math.imul(r88, r87);
@@ -10767,16 +10807,16 @@ function _enet_range_coder_decompress(r1, r2, r3, r4, r5) {
     r11 = r24 - r4 | 0;
     STACKTOP = r7;
     return r11;
-  } else if (r6 == 243) {
-    STACKTOP = r7;
-    return r11;
   } else if (r6 == 244) {
     STACKTOP = r7;
     return r11;
   } else if (r6 == 245) {
     STACKTOP = r7;
     return r11;
-  } else if (r6 == 247) {
+  } else if (r6 == 246) {
+    STACKTOP = r7;
+    return r11;
+  } else if (r6 == 248) {
     STACKTOP = r7;
     return r11;
   }
@@ -10889,7 +10929,7 @@ function _enet_host_create(r1, r2, r3, r4, r5) {
   r9 = _enet_socket_create(2);
   r10 = r7 >> 2;
   HEAP32[r10] = r9;
-  L353 : do {
+  L354 : do {
     if ((r9 | 0) != -1) {
       do {
         if ((r1 | 0) == 0) {
@@ -10913,10 +10953,10 @@ function _enet_host_create(r1, r2, r3, r4, r5) {
             break;
           }
           if ((r13 | 0) == -1) {
-            break L353;
+            break L354;
           }
           _enet_socket_destroy(r13);
-          break L353;
+          break L354;
         }
       } while (0);
       r13 = (r3 | 0) == 0;
@@ -10996,7 +11036,7 @@ function _enet_host_destroy(r1) {
   _enet_socket_destroy(HEAP32[r1 >> 2]);
   r2 = (r1 + 36 | 0) >> 2;
   r3 = r1 + 40 | 0;
-  L378 : do {
+  L379 : do {
     if ((HEAP32[r3 >> 2] | 0) > 0) {
       r4 = HEAP32[r2];
       while (1) {
@@ -11005,7 +11045,7 @@ function _enet_host_destroy(r1) {
         if (r5 >>> 0 < (HEAP32[r2] + (HEAP32[r3 >> 2] * 380 & -1) | 0) >>> 0) {
           r4 = r5;
         } else {
-          break L378;
+          break L379;
         }
       }
     }
@@ -11093,7 +11133,7 @@ function _enet_host_connect(r1, r2, r3, r4) {
       HEAP32[r9] = 32768;
     }
   } while (0);
-  L411 : do {
+  L412 : do {
     if ((r7 | 0) > 0) {
       r8 = HEAP32[r3], r13 = r8 >> 1;
       while (1) {
@@ -11108,7 +11148,7 @@ function _enet_host_connect(r1, r2, r3, r4) {
         if (r14 >>> 0 < (HEAP32[r3] + (r7 * 60 & -1) | 0) >>> 0) {
           r8 = r14, r13 = r8 >> 1;
         } else {
-          break L411;
+          break L412;
         }
       }
     }
@@ -11221,7 +11261,7 @@ function _enet_host_broadcast(r1, r2, r3) {
   var r4, r5, r6;
   r4 = r1 + 36 | 0;
   r5 = r1 + 40 | 0;
-  L418 : do {
+  L419 : do {
     if ((HEAP32[r5 >> 2] | 0) > 0) {
       r1 = HEAP32[r4 >> 2];
       while (1) {
@@ -11232,7 +11272,7 @@ function _enet_host_broadcast(r1, r2, r3) {
         if (r6 >>> 0 < (HEAP32[r4 >> 2] + (HEAP32[r5 >> 2] * 380 & -1) | 0) >>> 0) {
           r1 = r6;
         } else {
-          break L418;
+          break L419;
         }
       }
     }
@@ -11322,7 +11362,7 @@ function _enet_host_bandwidth_throttle(r1) {
   } else {
     r17 = Math.floor((Math.imul(r13, r7) >>> 0) / 1e3);
   }
-  L459 : do {
+  L460 : do {
     if ((r14 | 0) != 0) {
       r13 = r15;
       r12 = r14;
@@ -11334,7 +11374,7 @@ function _enet_host_bandwidth_throttle(r1) {
           r18 = Math.floor((r11 << 5 >>> 0) / (r13 >>> 0));
         }
         if ((HEAP32[r9] | 0) <= 0) {
-          r2 = 352;
+          r2 = 353;
           break;
         }
         r16 = r13;
@@ -11402,7 +11442,7 @@ function _enet_host_bandwidth_throttle(r1) {
         }
         r32 = (r27 | 0) != 0;
         if ((r25 | 0) == 0 | r32 ^ 1) {
-          r2 = 362;
+          r2 = 363;
           break;
         } else {
           r13 = r28;
@@ -11410,11 +11450,11 @@ function _enet_host_bandwidth_throttle(r1) {
           r11 = r26;
         }
       }
-      if (r2 == 352) {
+      if (r2 == 353) {
         if ((r12 | 0) == 0) {
           break;
         }
-      } else if (r2 == 362) {
+      } else if (r2 == 363) {
         if (!r32) {
           break;
         }
@@ -11441,17 +11481,17 @@ function _enet_host_bandwidth_throttle(r1) {
         if (r22 >>> 0 < (HEAP32[r8] + (HEAP32[r9] * 380 & -1) | 0) >>> 0) {
           r11 = r22, r13 = r11 >> 2;
         } else {
-          break L459;
+          break L460;
         }
       }
     }
   } while (0);
   r18 = r1 + 32 | 0;
-  L491 : do {
+  L492 : do {
     if ((HEAP32[r18 >> 2] | 0) != 0) {
       HEAP32[r18 >> 2] = 0;
       r32 = HEAP32[r1 + 12 >> 2];
-      L493 : do {
+      L494 : do {
         if ((r32 | 0) == 0 | (r14 | 0) == 0) {
           r33 = 0;
         } else {
@@ -11460,7 +11500,7 @@ function _enet_host_bandwidth_throttle(r1) {
           while (1) {
             r27 = Math.floor((r26 >>> 0) / (r2 >>> 0));
             if ((HEAP32[r9] | 0) <= 0) {
-              break L491;
+              break L492;
             }
             r28 = r2;
             r25 = r26;
@@ -11506,7 +11546,7 @@ function _enet_host_bandwidth_throttle(r1) {
             }
             if ((r36 | 0) == 0 | (r34 | 0) == 0) {
               r33 = r27;
-              break L493;
+              break L494;
             } else {
               r2 = r36;
               r26 = r35;
@@ -11560,7 +11600,7 @@ function _enet_host_bandwidth_throttle(r1) {
         if (r11 >>> 0 < (HEAP32[r8] + (HEAP32[r9] * 380 & -1) | 0) >>> 0) {
           r25 = r11, r28 = r25 >> 2;
         } else {
-          break L491;
+          break L492;
         }
       }
     }
@@ -11777,7 +11817,7 @@ function _enet_crc32(r1, r2) {
     r1 = HEAP32[r7 >> 2];
     r9 = HEAP32[r7 + 4 >> 2];
     r10 = r1 + r9 | 0;
-    L602 : do {
+    L603 : do {
       if ((r9 | 0) > 0) {
         r11 = r6;
         r12 = r1;
@@ -11789,7 +11829,7 @@ function _enet_crc32(r1, r2) {
             r12 = r13;
           } else {
             r15 = r14;
-            break L602;
+            break L603;
           }
         }
       } else {
@@ -11829,12 +11869,13 @@ function _initialize_crc32() {
     r3 = r2 << 1;
     r4 = (r2 | 0) < 0 ? r3 ^ 79764919 : r3;
     r3 = r4 << 1;
-    HEAP32[(r1 << 2) + 409992 >> 2] = _reflect_crc((r4 | 0) < 0 ? r3 ^ 79764919 : r3, 32);
-    r3 = r1 + 1 | 0;
-    if ((r3 | 0) == 256) {
+    r2 = _reflect_crc((r4 | 0) < 0 ? r3 ^ 79764919 : r3, 32);
+    HEAP32[(r1 << 2) + 409992 >> 2] = r2;
+    r2 = r1 + 1 | 0;
+    if ((r2 | 0) == 256) {
       break;
     } else {
-      r1 = r3;
+      r1 = r2;
     }
   }
   HEAP8[409860] = 1;
@@ -11932,7 +11973,7 @@ function _enet_peer_send(r1, r2, r3) {
   if (r13 >>> 0 <= r14 >>> 0) {
     HEAP8[r7 + 1 | 0] = r2;
     r4 = HEAP32[r3 + 4 >> 2];
-    L632 : do {
+    L633 : do {
       if ((r4 & 3 | 0) == 2) {
         HEAP8[r7 | 0] = 73;
         r15 = r7 + 6 | 0;
@@ -11943,7 +11984,7 @@ function _enet_peer_send(r1, r2, r3) {
       } else {
         do {
           if ((r4 & 1 | 0) == 0) {
-            if (HEAP16[((r9 * 60 & -1) + 2 >> 1) + r10] << 16 >> 16 == -1) {
+            if ((HEAP16[((r9 * 60 & -1) + 2 >> 1) + r10] | 0) == -1) {
               break;
             }
             HEAP8[r7 | 0] = 7;
@@ -11952,7 +11993,7 @@ function _enet_peer_send(r1, r2, r3) {
             HEAP8[r15] = tempBigInt & 255;
             tempBigInt = tempBigInt >> 8;
             HEAP8[r15 + 1 | 0] = tempBigInt & 255;
-            break L632;
+            break L633;
           }
         } while (0);
         HEAP8[r7 | 0] = -122;
@@ -11977,7 +12018,7 @@ function _enet_peer_send(r1, r2, r3) {
     if ((HEAP32[r3 + 4 >> 2] & 9 | 0) == 8) {
       r13 = HEAP16[((r9 * 60 & -1) + 2 >> 1) + r10];
       if (r13 << 16 >> 16 == -1) {
-        r5 = 483;
+        r5 = 484;
         break;
       } else {
         r16 = 12;
@@ -11985,17 +12026,17 @@ function _enet_peer_send(r1, r2, r3) {
         break;
       }
     } else {
-      r5 = 483;
+      r5 = 484;
     }
   } while (0);
-  if (r5 == 483) {
+  if (r5 == 484) {
     r16 = -120;
     r17 = HEAP16[((r9 * 60 & -1) >> 1) + r10];
   }
   r10 = _htons(r17 + 1 & 65535);
   _enet_list_clear(r8);
   r17 = HEAP32[r12];
-  L650 : do {
+  L651 : do {
     if ((r17 | 0) == 0) {
       r18 = 0;
     } else {
@@ -12074,7 +12115,7 @@ function _enet_peer_send(r1, r2, r3) {
           r15 = r21;
         } else {
           r18 = r19;
-          break L650;
+          break L651;
         }
       }
       r15 = r8 | 0;
@@ -12134,35 +12175,36 @@ function _enet_peer_setup_outgoing_command(r1, r2) {
   r6 = HEAP32[r1 + 40 >> 2];
   r7 = r6 + (r5 * 60 & -1) | 0;
   r8 = r2 + 32 | 0;
-  r9 = r1 + 68 | 0;
-  HEAP32[r9 >> 2] = _enet_protocol_command_size(HEAP8[r8]) + HEAPU16[r2 + 28 >> 1] + HEAP32[r9 >> 2] | 0;
+  r9 = _enet_protocol_command_size(HEAP8[r8]);
+  r10 = r1 + 68 | 0;
+  HEAP32[r10 >> 2] = HEAPU16[r2 + 28 >> 1] + r9 + HEAP32[r10 >> 2] | 0;
   do {
-    if (HEAP8[r4] << 24 >> 24 == -1) {
-      r9 = r1 + 188 | 0;
-      r10 = HEAP16[r9 >> 1] + 1 & 65535;
-      HEAP16[r9 >> 1] = r10;
-      HEAP16[r2 + 8 >> 1] = r10;
+    if ((HEAP8[r4] | 0) == -1) {
+      r10 = r1 + 188 | 0;
+      r9 = HEAP16[r10 >> 1] + 1 & 65535;
+      HEAP16[r10 >> 1] = r9;
+      HEAP16[r2 + 8 >> 1] = r9;
       HEAP16[r2 + 10 >> 1] = 0;
     } else {
-      r10 = HEAPU8[r8];
-      if ((r10 & 128 | 0) != 0) {
-        r9 = (r7 | 0) >> 1;
-        HEAP16[r9] = HEAP16[r9] + 1 & 65535;
+      r9 = HEAPU8[r8];
+      if ((r9 & 128 | 0) != 0) {
+        r10 = (r7 | 0) >> 1;
+        HEAP16[r10] = HEAP16[r10] + 1 & 65535;
         HEAP16[r6 + (r5 * 60 & -1) + 2 >> 1] = 0;
-        HEAP16[r2 + 8 >> 1] = HEAP16[r9];
+        HEAP16[r2 + 8 >> 1] = HEAP16[r10];
         HEAP16[r2 + 10 >> 1] = 0;
         break;
       }
-      if ((r10 & 64 | 0) != 0) {
-        r10 = r1 + 246 | 0;
-        HEAP16[r10 >> 1] = HEAP16[r10 >> 1] + 1 & 65535;
+      if ((r9 & 64 | 0) != 0) {
+        r9 = r1 + 246 | 0;
+        HEAP16[r9 >> 1] = HEAP16[r9 >> 1] + 1 & 65535;
         HEAP16[r2 + 8 >> 1] = 0;
         HEAP16[r2 + 10 >> 1] = 0;
         break;
       }
       if ((HEAP32[r2 + 24 >> 2] | 0) == 0) {
-        r10 = r6 + (r5 * 60 & -1) + 2 | 0;
-        HEAP16[r10 >> 1] = HEAP16[r10 >> 1] + 1 & 65535;
+        r9 = r6 + (r5 * 60 & -1) + 2 | 0;
+        HEAP16[r9 >> 1] = HEAP16[r9 >> 1] + 1 & 65535;
       }
       HEAP16[r2 + 8 >> 1] = HEAP16[r7 >> 1];
       HEAP16[r2 + 10 >> 1] = HEAP16[r6 + (r5 * 60 & -1) + 2 >> 1];
@@ -12186,7 +12228,7 @@ function _enet_peer_setup_outgoing_command(r1, r2) {
       HEAP8[r7] = tempBigInt & 255;
       tempBigInt = tempBigInt >> 8;
       HEAP8[r7 + 1 | 0] = tempBigInt & 255;
-      r3 = 521;
+      r3 = 522;
       break;
     } else if ((r6 | 0) == 9) {
       r7 = r2 + 36 | 0;
@@ -12194,13 +12236,13 @@ function _enet_peer_setup_outgoing_command(r1, r2) {
       HEAP8[r7] = tempBigInt & 255;
       tempBigInt = tempBigInt >> 8;
       HEAP8[r7 + 1 | 0] = tempBigInt & 255;
-      r3 = 521;
+      r3 = 522;
       break;
     } else {
       r11 = r5;
     }
   } while (0);
-  if (r3 == 521) {
+  if (r3 == 522) {
     r11 = HEAP8[r8];
   }
   if (r11 << 24 >> 24 < 0) {
@@ -12244,14 +12286,14 @@ function _enet_peer_reset_queues(r1) {
   r2 = r1 + 192 | 0;
   r3 = r2 | 0;
   r4 = HEAP32[r3 >> 2];
-  L707 : do {
+  L708 : do {
     if ((r4 | 0) != (r2 | 0)) {
       r5 = r4;
       while (1) {
         _enet_free(_enet_list_remove(r5));
         r6 = HEAP32[r3 >> 2];
         if ((r6 | 0) == (r2 | 0)) {
-          break L707;
+          break L708;
         } else {
           r5 = r6;
         }
@@ -12279,7 +12321,7 @@ function _enet_peer_reset_queues(r1) {
     return;
   }
   r5 = HEAP32[r2];
-  L717 : do {
+  L718 : do {
     if (r3 >>> 0 < (r5 + (HEAP32[r4] * 60 & -1) | 0) >>> 0) {
       r6 = r3;
       while (1) {
@@ -12291,7 +12333,7 @@ function _enet_peer_reset_queues(r1) {
           r6 = r9;
         } else {
           r11 = r10;
-          break L717;
+          break L718;
         }
       }
     } else {
@@ -12470,7 +12512,7 @@ function _enet_peer_disconnect(r1, r2) {
 function _enet_peer_disconnect_later(r1, r2) {
   var r3, r4, r5;
   r3 = r1 + 36 | 0;
-  L758 : do {
+  L759 : do {
     if ((HEAP32[r3 >> 2] - 5 | 0) >>> 0 < 2) {
       r4 = r1 + 216 | 0;
       do {
@@ -12481,7 +12523,7 @@ function _enet_peer_disconnect_later(r1, r2) {
           }
           r5 = r1 + 200 | 0;
           if ((HEAP32[r5 >> 2] | 0) == (r5 | 0)) {
-            break L758;
+            break L759;
           }
         }
       } while (0);
@@ -12545,18 +12587,18 @@ function _enet_peer_dispatch_incoming_unreliable_commands(r1, r2) {
   r13 = r5;
   r14 = r5;
   r15 = r5;
-  L780 : while (1) {
+  L781 : while (1) {
     r5 = r14;
     do {
       if ((HEAP8[r14 + 12 | 0] & 15) << 24 >> 24 == 9) {
         r16 = r15;
         r17 = r13;
       } else {
-        if (HEAP16[r14 + 8 >> 1] << 16 >> 16 != HEAP16[r8 >> 1] << 16 >> 16) {
+        if ((HEAP16[r14 + 8 >> 1] | 0) != (HEAP16[r8 >> 1] | 0)) {
           r18 = r13;
           r19 = r14;
           r20 = r15;
-          break L780;
+          break L781;
         }
         if ((HEAP32[r14 + 64 >> 2] | 0) == 0) {
           HEAP16[r9 >> 1] = HEAP16[r5 + 10 >> 1];
@@ -12649,7 +12691,7 @@ function _enet_peer_dispatch_incoming_reliable_commands(r1, r2) {
   r3 = r2 + 44 | 0;
   r4 = (r3 | 0) >> 2;
   r5 = HEAP32[r4];
-  L817 : do {
+  L818 : do {
     if ((r5 | 0) == (r3 | 0)) {
       r6 = r5;
     } else {
@@ -12658,12 +12700,12 @@ function _enet_peer_dispatch_incoming_reliable_commands(r1, r2) {
       while (1) {
         if ((HEAP32[r8 + 64 >> 2] | 0) != 0) {
           r6 = r8;
-          break L817;
+          break L818;
         }
         r9 = HEAP16[r8 + 8 >> 1];
         if (r9 << 16 >> 16 != (HEAP16[r7] + 1 & 65535) << 16 >> 16) {
           r6 = r8;
-          break L817;
+          break L818;
         }
         HEAP16[r7] = r9;
         r10 = HEAP32[r8 + 60 >> 2];
@@ -12673,7 +12715,7 @@ function _enet_peer_dispatch_incoming_reliable_commands(r1, r2) {
         r10 = HEAP32[r8 >> 2];
         if ((r10 | 0) == (r3 | 0)) {
           r6 = r10;
-          break L817;
+          break L818;
         } else {
           r8 = r10;
         }
@@ -12699,9 +12741,9 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
   r6 = HEAPU8[r2 + 1 | 0];
   r7 = HEAP32[r1 + 40 >> 2];
   r8 = r7 + (r6 * 60 & -1) | 0;
-  L835 : do {
+  L836 : do {
     if ((HEAP32[r1 + 36 >> 2] | 0) == 6) {
-      r5 = 684;
+      r5 = 685;
     } else {
       r9 = r2 | 0;
       if ((HEAP8[r9] & 15) << 24 >> 24 == 9) {
@@ -12714,26 +12756,26 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
         r14 = (r13 & 65535) >>> 12;
         r15 = (r12 & 65535) < (r13 & 65535) ? r11 | 16 : r11;
         if ((r15 & 65535) < (r14 & 65535)) {
-          r5 = 684;
+          r5 = 685;
           break;
         }
         if ((r15 & 65535) >>> 0 < ((r14 & 65535) + 7 | 0) >>> 0) {
           r10 = r12 & 65535;
         } else {
-          r5 = 684;
+          r5 = 685;
           break;
         }
       }
       r12 = HEAP8[r9] & 15;
-      L841 : do {
+      L842 : do {
         if ((r12 | 0) == 7 | (r12 | 0) == 12) {
           r14 = r2 + 4 | 0;
           r15 = _htons((tempInt = HEAPU8[r14] | HEAPU8[r14 + 1 | 0] << 8, tempInt << 16 >> 16));
           r14 = r7 + (r6 * 60 & -1) + 38 | 0;
           if ((r10 | 0) == (HEAPU16[r14 >> 1] | 0)) {
             if ((r15 & 65535) <= HEAPU16[r7 + (r6 * 60 & -1) + 40 >> 1]) {
-              r5 = 684;
-              break L835;
+              r5 = 685;
+              break L836;
             }
           }
           r11 = r7 + (r6 * 60 & -1) + 52 | 0;
@@ -12745,7 +12787,7 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
           }
           r18 = (HEAP8[r9] & 15) << 24 >> 24 == 9;
           r19 = r13;
-          L847 : while (1) {
+          L848 : while (1) {
             r13 = r19;
             do {
               if (!r18) {
@@ -12756,7 +12798,7 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
                   if (!r22) {
                     r16 = r19;
                     r17 = r15;
-                    break L841;
+                    break L842;
                   }
                 } else {
                   if (r22) {
@@ -12767,14 +12809,14 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
                 if (r22 >>> 0 < r10 >>> 0) {
                   r16 = r19;
                   r17 = r15;
-                  break L841;
+                  break L842;
                 }
                 if (r22 >>> 0 > r10 >>> 0) {
                   break;
                 }
                 r23 = HEAP16[r13 + 10 >> 1];
                 if ((r23 & 65535) <= (r15 & 65535)) {
-                  break L847;
+                  break L848;
                 }
               }
             } while (0);
@@ -12782,7 +12824,7 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
             if ((r13 | 0) == (r11 | 0)) {
               r16 = r13;
               r17 = r15;
-              break L841;
+              break L842;
             } else {
               r19 = r13;
             }
@@ -12791,8 +12833,8 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
             r16 = r19;
             r17 = r15;
           } else {
-            r5 = 684;
-            break L835;
+            r5 = 685;
+            break L836;
           }
         } else if ((r12 | 0) == 9) {
           r16 = r7 + (r6 * 60 & -1) + 52 | 0;
@@ -12800,8 +12842,8 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
         } else if ((r12 | 0) == 8 | (r12 | 0) == 6) {
           r11 = r7 + (r6 * 60 & -1) + 38 | 0;
           if ((r10 | 0) == (HEAPU16[r11 >> 1] | 0)) {
-            r5 = 684;
-            break L835;
+            r5 = 685;
+            break L836;
           }
           r14 = r7 + (r6 * 60 & -1) + 44 | 0;
           r18 = HEAP32[r7 + (r6 * 60 & -1) + 48 >> 2];
@@ -12819,23 +12861,23 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
             do {
               if (r11) {
                 if (r21) {
-                  r5 = 654;
+                  r5 = 655;
                   break;
                 } else {
                   r16 = r22;
                   r17 = 0;
-                  break L841;
+                  break L842;
                 }
               } else {
                 if (r21) {
                   break;
                 } else {
-                  r5 = 654;
+                  r5 = 655;
                   break;
                 }
               }
             } while (0);
-            if (r5 == 654) {
+            if (r5 == 655) {
               r5 = 0;
               r24 = HEAPU16[r18 >> 1];
               if (r24 >>> 0 <= r10 >>> 0) {
@@ -12846,7 +12888,7 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
             if ((r21 | 0) == (r14 | 0)) {
               r16 = r21;
               r17 = 0;
-              break L841;
+              break L842;
             } else {
               r22 = r21;
             }
@@ -12855,12 +12897,12 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
             r16 = r22;
             r17 = 0;
           } else {
-            r5 = 684;
-            break L835;
+            r5 = 685;
+            break L836;
           }
         } else {
-          r5 = 684;
-          break L835;
+          r5 = 685;
+          break L836;
         }
       } while (0);
       r12 = _enet_malloc(76);
@@ -12888,7 +12930,7 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
           }
           if ((r25 | 0) == 0) {
             _enet_free(r12);
-            break L835;
+            break L836;
           } else {
             _memset(r25, 0, (r4 + 31 | 0) >>> 5 << 2);
             break;
@@ -12913,7 +12955,7 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
     }
   } while (0);
   do {
-    if (r5 == 684) {
+    if (r5 == 685) {
       if ((r4 | 0) != 0) {
         break;
       }
@@ -12943,7 +12985,9 @@ function _enet_peer_queue_incoming_command(r1, r2, r3, r4) {
   return r26;
 }
 function _enet_host_flush(r1) {
-  HEAP32[r1 + 48 >> 2] = _enet_time_get();
+  var r2;
+  r2 = _enet_time_get();
+  HEAP32[r1 + 48 >> 2] = r2;
   _enet_protocol_send_outgoing_commands(r1, 0, 0);
   return;
 }
@@ -12988,17 +13032,17 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
   r35 = r1 + 48 | 0;
   r36 = (r2 | 0) == 0;
   r37 = r2 | 0;
-  L912 : while (1) {
+  L913 : while (1) {
     HEAP32[r10] = 0;
     if ((HEAP32[r12 >> 2] | 0) <= 0) {
       r38 = 0;
-      r4 = 753;
+      r4 = 754;
       break;
     }
     r39 = HEAP32[r11 >> 2], r40 = r39 >> 2;
     while (1) {
       r41 = HEAP32[r40 + 9];
-      L917 : do {
+      L918 : do {
         if (!((r41 | 0) == 0 | (r41 | 0) == 9)) {
           HEAP16[r13] = 0;
           HEAP32[r14 >> 2] = 0;
@@ -13021,32 +13065,32 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
                 break;
               }
               if (r36) {
-                break L917;
+                break L918;
               }
               if ((HEAP32[r37 >> 2] | 0) == 0) {
-                break L917;
+                break L918;
               } else {
                 r38 = 1;
-                r4 = 751;
-                break L912;
+                r4 = 752;
+                break L913;
               }
             }
           } while (0);
           r42 = r39 + 216 | 0;
           do {
             if ((HEAP32[r42 >> 2] | 0) == (r42 | 0)) {
-              r4 = 716;
+              r4 = 717;
             } else {
               if ((_enet_protocol_send_reliable_outgoing_commands(r1, r39) | 0) == 0) {
                 break;
               } else {
-                r4 = 716;
+                r4 = 717;
                 break;
               }
             }
           } while (0);
           do {
-            if (r4 == 716) {
+            if (r4 == 717) {
               r4 = 0;
               r42 = r39 + 200 | 0;
               if ((HEAP32[r42 >> 2] | 0) != (r42 | 0)) {
@@ -13111,8 +13155,9 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
             }
           } while (0);
           HEAP32[r21 >> 2] = r9;
-          if (HEAP16[r13] << 16 >> 16 < 0) {
-            HEAP16[r19 >> 1] = _htons(HEAP32[r18] & 65535);
+          if ((HEAP16[r13] | 0) < 0) {
+            r44 = _htons(HEAP32[r18] & 65535);
+            HEAP16[r19 >> 1] = r44;
             HEAP32[r6 >> 2] = 4;
           } else {
             HEAP32[r34 >> 2] = 2;
@@ -13141,7 +13186,8 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
           if (HEAPU16[r44] < 4095) {
             HEAP16[r13] = HEAPU8[r39 + 20 | 0] << 12 | HEAP16[r13];
           }
-          HEAP16[r7 >> 1] = _htons(HEAP16[r13] | HEAP16[r44]);
+          r47 = _htons(HEAP16[r13] | HEAP16[r44]);
+          HEAP16[r7 >> 1] = r47;
           if ((HEAP32[r23 >> 2] | 0) != 0) {
             r47 = r8 + HEAP32[r30] | 0;
             if (HEAPU16[r44] < 4095) {
@@ -13151,7 +13197,8 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
             }
             HEAP32[r47 >> 2] = r54;
             HEAP32[r30] = HEAP32[r30] + 4 | 0;
-            HEAP32[r47 >> 2] = FUNCTION_TABLE[HEAP32[r23 >> 2]](r20, HEAP32[r15]);
+            r44 = FUNCTION_TABLE[HEAP32[r23 >> 2]](r20, HEAP32[r15]);
+            HEAP32[r47 >> 2] = r44;
           }
           if ((r53 | 0) != 0) {
             HEAP32[r28 >> 2] = r27;
@@ -13159,14 +13206,14 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
             HEAP32[r15] = 2;
           }
           HEAP32[r40 + 18] = HEAP32[r18];
-          r47 = _enet_socket_send(HEAP32[r24 >> 2], r39 + 24 | 0, r20, HEAP32[r15]);
+          r44 = _enet_socket_send(HEAP32[r24 >> 2], r39 + 24 | 0, r20, HEAP32[r15]);
           _enet_protocol_remove_sent_unreliable_commands(r39);
-          if ((r47 | 0) < 0) {
+          if ((r44 | 0) < 0) {
             r38 = -1;
-            r4 = 750;
-            break L912;
+            r4 = 751;
+            break L913;
           }
-          HEAP32[r25 >> 2] = HEAP32[r25 >> 2] + r47 | 0;
+          HEAP32[r25 >> 2] = HEAP32[r25 >> 2] + r44 | 0;
           HEAP32[r26 >> 2] = HEAP32[r26 >> 2] + 1 | 0;
         }
       } while (0);
@@ -13179,20 +13226,20 @@ function _enet_protocol_send_outgoing_commands(r1, r2, r3) {
     }
     if ((HEAP32[r10] | 0) == 0) {
       r38 = 0;
-      r4 = 752;
+      r4 = 753;
       break;
     }
   }
-  if (r4 == 750) {
-    STACKTOP = r5;
-    return r38;
-  } else if (r4 == 751) {
+  if (r4 == 751) {
     STACKTOP = r5;
     return r38;
   } else if (r4 == 752) {
     STACKTOP = r5;
     return r38;
   } else if (r4 == 753) {
+    STACKTOP = r5;
+    return r38;
+  } else if (r4 == 754) {
     STACKTOP = r5;
     return r38;
   }
@@ -13223,7 +13270,7 @@ function _enet_protocol_dispatch_incoming_commands(r1, r2) {
   r9 = r2 + 8 | 0;
   r10 = r2 + 16 | 0;
   r2 = r7;
-  L989 : while (1) {
+  L990 : while (1) {
     r11 = _enet_list_remove(r2);
     r12 = r11;
     r13 = r11 + 240 | 0;
@@ -13232,8 +13279,8 @@ function _enet_protocol_dispatch_incoming_commands(r1, r2) {
     r7 = HEAP32[r14 >> 2];
     do {
       if ((r7 | 0) == 9) {
-        r4 = 763;
-        break L989;
+        r4 = 764;
+        break L990;
       } else if ((r7 | 0) == 5) {
         r15 = r11 + 232 | 0;
         r16 = r15;
@@ -13244,24 +13291,24 @@ function _enet_protocol_dispatch_incoming_commands(r1, r2) {
         r15 = _enet_peer_receive(r12, r9);
         HEAP32[r10 >> 2] = r15;
         if ((r15 | 0) != 0) {
-          r4 = 767;
-          break L989;
+          r4 = 768;
+          break L990;
         }
       } else if ((r7 | 0) == 3 | (r7 | 0) == 4) {
-        r4 = 762;
-        break L989;
+        r4 = 763;
+        break L990;
       }
     } while (0);
     r7 = HEAP32[r6 >> 2];
     if ((r7 | 0) == (r5 | 0)) {
       r8 = 0;
-      r4 = 774;
+      r4 = 775;
       break;
     } else {
       r2 = r7;
     }
   }
-  if (r4 == 763) {
+  if (r4 == 764) {
     HEAP32[r1 + 32 >> 2] = 1;
     HEAP32[r3] = 2;
     HEAP32[r3 + 1] = r12;
@@ -13269,7 +13316,7 @@ function _enet_protocol_dispatch_incoming_commands(r1, r2) {
     _enet_peer_reset(r12);
     r8 = 1;
     return r8;
-  } else if (r4 == 767) {
+  } else if (r4 == 768) {
     HEAP32[r3] = 3;
     HEAP32[r3 + 1] = r12;
     if ((HEAP32[r17 >> 2] | 0) == (r16 | 0)) {
@@ -13280,14 +13327,14 @@ function _enet_protocol_dispatch_incoming_commands(r1, r2) {
     _enet_list_insert(r5, r11);
     r8 = 1;
     return r8;
-  } else if (r4 == 762) {
+  } else if (r4 == 763) {
     HEAP32[r14 >> 2] = 5;
     HEAP32[r3] = 1;
     HEAP32[r3 + 1] = r12;
     HEAP32[r3 + 3] = HEAP32[r11 + 376 >> 2];
     r8 = 1;
     return r8;
-  } else if (r4 == 774) {
+  } else if (r4 == 775) {
     return r8;
   }
 }
@@ -13308,18 +13355,18 @@ function _enet_host_service(r1, r2, r3) {
         r9 = 1;
         break;
       } else if ((r8 | 0) != -1) {
-        r4 = 779;
+        r4 = 780;
         break;
       }
       _perror(411380);
       r9 = -1;
       break;
     } else {
-      r4 = 779;
+      r4 = 780;
     }
   } while (0);
-  L1010 : do {
-    if (r4 == 779) {
+  L1011 : do {
+    if (r4 == 780) {
       r8 = _enet_time_get();
       r10 = (r1 + 48 | 0) >> 2;
       HEAP32[r10] = r8;
@@ -13335,35 +13382,35 @@ function _enet_host_service(r1, r2, r3) {
         }
         r15 = _enet_protocol_send_outgoing_commands(r1, r2, 1);
         if ((r15 | 0) == -1) {
-          r4 = 783;
+          r4 = 784;
           break;
         } else if ((r15 | 0) == 1) {
           r9 = 1;
-          break L1010;
+          break L1011;
         }
         r15 = _enet_protocol_receive_incoming_commands(r1, r2);
         if ((r15 | 0) == 1) {
           r9 = 1;
-          break L1010;
+          break L1011;
         } else if ((r15 | 0) == -1) {
-          r4 = 785;
+          r4 = 786;
           break;
         }
         r15 = _enet_protocol_send_outgoing_commands(r1, r2, 1);
         if ((r15 | 0) == 1) {
           r9 = 1;
-          break L1010;
+          break L1011;
         } else if ((r15 | 0) == -1) {
-          r4 = 787;
+          r4 = 788;
           break;
         }
         if (r7) {
           r15 = _enet_protocol_dispatch_incoming_commands(r1, r2);
           if ((r15 | 0) == 1) {
             r9 = 1;
-            break L1010;
+            break L1011;
           } else if ((r15 | 0) == -1) {
-            r4 = 790;
+            r4 = 791;
             break;
           }
         }
@@ -13371,34 +13418,35 @@ function _enet_host_service(r1, r2, r3) {
         HEAP32[r10] = r15;
         if ((r15 - r11 | 0) >>> 0 <= 86399999) {
           r9 = 0;
-          break L1010;
+          break L1011;
         }
         HEAP32[r6 >> 2] = 2;
         r15 = HEAP32[r10];
         r13 = r11 - r15 | 0;
         if ((_enet_socket_wait(HEAP32[r12 >> 2], r6, r13 >>> 0 > 86399999 ? r15 - r11 | 0 : r13) | 0) != 0) {
           r9 = -1;
-          break L1010;
+          break L1011;
         }
-        HEAP32[r10] = _enet_time_get();
+        r13 = _enet_time_get();
+        HEAP32[r10] = r13;
         if ((HEAP32[r6 >> 2] | 0) != 2) {
           r9 = 0;
-          break L1010;
+          break L1011;
         }
       }
-      if (r4 == 783) {
+      if (r4 == 784) {
         _perror(411348);
         r9 = -1;
         break;
-      } else if (r4 == 785) {
+      } else if (r4 == 786) {
         _perror(411224);
         r9 = -1;
         break;
-      } else if (r4 == 790) {
+      } else if (r4 == 791) {
         _perror(411380);
         r9 = -1;
         break;
-      } else if (r4 == 787) {
+      } else if (r4 == 788) {
         _perror(411348);
         r9 = -1;
         break;
@@ -13430,12 +13478,12 @@ function _enet_protocol_receive_incoming_commands(r1, r2) {
     r16 = _enet_socket_receive(HEAP32[r9 >> 2], r10, r5, 1);
     if ((r16 | 0) < 0) {
       r17 = -1;
-      r3 = 803;
+      r3 = 804;
       break;
     }
     if ((r16 | 0) == 0) {
       r17 = 0;
-      r3 = 805;
+      r3 = 806;
       break;
     }
     HEAP32[r11 >> 2] = r6;
@@ -13444,36 +13492,37 @@ function _enet_protocol_receive_incoming_commands(r1, r2) {
     HEAP32[r14 >> 2] = HEAP32[r14 >> 2] + 1 | 0;
     if ((_enet_packet_filter(r1) | 0) == 0) {
       r17 = 0;
-      r3 = 806;
+      r3 = 807;
       break;
     }
     r16 = _enet_protocol_handle_incoming_commands(r1, r2);
     if ((r16 | 0) == 1 | (r16 | 0) == -1) {
       r17 = r16;
-      r3 = 804;
+      r3 = 805;
       break;
     }
     if (!r15) {
-      r3 = 801;
+      r3 = 802;
       break;
     }
   }
-  if (r3 == 804) {
+  if (r3 == 805) {
     STACKTOP = r4;
     return r17;
-  } else if (r3 == 803) {
+  } else if (r3 == 804) {
+    STACKTOP = r4;
+    return r17;
+  } else if (r3 == 807) {
     STACKTOP = r4;
     return r17;
   } else if (r3 == 806) {
     STACKTOP = r4;
     return r17;
-  } else if (r3 == 805) {
-    STACKTOP = r4;
-    return r17;
-  } else if (r3 == 801) {
+  } else if (r3 == 802) {
     HEAP32[r2 >> 2] = 100;
     HEAP32[r2 + 12 >> 2] = 0;
-    HEAP32[r2 + 16 >> 2] = _enet_packet_create(HEAP32[r11 >> 2], HEAP32[r12 >> 2], 4);
+    r3 = _enet_packet_create(HEAP32[r11 >> 2], HEAP32[r12 >> 2], 4);
+    HEAP32[r2 + 16 >> 2] = r3;
     r17 = 1;
     STACKTOP = r4;
     return r17;
@@ -13525,19 +13574,19 @@ function _enet_protocol_handle_incoming_commands(r1, r2) {
       r23 = HEAP32[r22 >> 2];
       do {
         if ((HEAP32[r1 + 10348 >> 2] | 0) == (r23 | 0)) {
-          if (HEAP16[r1 + 10352 >> 1] << 16 >> 16 == HEAP16[r20 + (r13 * 380 & -1) + 28 >> 1] << 16 >> 16) {
+          if ((HEAP16[r1 + 10352 >> 1] | 0) == (HEAP16[r20 + (r13 * 380 & -1) + 28 >> 1] | 0)) {
             break;
           }
           r24 = HEAP32[r22 >> 2];
-          r3 = 815;
+          r3 = 816;
           break;
         } else {
           r24 = r23;
-          r3 = 815;
+          r3 = 816;
         }
       } while (0);
       do {
-        if (r3 == 815) {
+        if (r3 == 816) {
           if ((r24 | 0) == -1) {
             break;
           } else {
@@ -13621,7 +13670,7 @@ function _enet_protocol_handle_incoming_commands(r1, r2) {
   HEAP32[r6] = r7;
   r18 = r1 + 10380 | 0;
   r17 = HEAP32[r10] + HEAP32[r8] | 0;
-  L1089 : do {
+  L1090 : do {
     if (r7 >>> 0 < r17 >>> 0) {
       r25 = r11 + 2 | 0;
       r23 = r19;
@@ -13630,20 +13679,20 @@ function _enet_protocol_handle_incoming_commands(r1, r2) {
       while (1) {
         r14 = r15;
         if ((r15 + 4 | 0) >>> 0 > r24 >>> 0) {
-          break L1089;
+          break L1090;
         }
         r13 = HEAP8[r15] & 15;
         r12 = r13 & 255;
         if ((r13 & 255) > 12 | r13 << 24 >> 24 == 0) {
-          break L1089;
+          break L1090;
         }
         r22 = r15 + HEAP32[(r12 << 2) + 411016 >> 2] | 0;
         if (r22 >>> 0 > r24 >>> 0) {
-          break L1089;
+          break L1090;
         }
         HEAP32[r6] = r22;
         if (!((r23 | 0) != 0 | r13 << 24 >> 24 == 2)) {
-          break L1089;
+          break L1090;
         }
         r13 = r15 + 2 | 0;
         tempBigInt = _htons((tempInt = HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8, tempInt << 16 >> 16));
@@ -13653,112 +13702,112 @@ function _enet_protocol_handle_incoming_commands(r1, r2) {
         do {
           if ((r12 | 0) == 9) {
             if ((_enet_protocol_handle_send_unsequenced(r1, r23, r14, r5) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 10) {
             if ((_enet_protocol_handle_bandwidth_limit(r1, r23, r14) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 11) {
             if ((_enet_protocol_handle_throttle_configure(r23, r14) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 12) {
             if ((_enet_protocol_handle_send_unreliable_fragment(r1, r23, r14, r5) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 2) {
             if ((r23 | 0) != 0) {
-              break L1089;
+              break L1090;
             }
             if ((HEAP32[r18 >> 2] | 0) != 0) {
-              break L1089;
+              break L1090;
             }
             r13 = _enet_protocol_handle_connect(r1, r14);
             if ((r13 | 0) == 0) {
-              break L1089;
+              break L1090;
             } else {
               r26 = r13;
-              r3 = 851;
+              r3 = 852;
               break;
             }
           } else if ((r12 | 0) == 1) {
             if ((_enet_protocol_handle_acknowledge(r1, r2, r23, r14) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 4) {
             _enet_protocol_handle_disconnect(r1, r23, r14);
-            r3 = 850;
+            r3 = 851;
             break;
           } else if ((r12 | 0) == 5) {
             if ((_enet_protocol_handle_ping(r23) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 8) {
             if ((_enet_protocol_handle_send_fragment(r1, r23, r14, r5) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 6) {
             if ((_enet_protocol_handle_send_reliable(r1, r23, r14, r5) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 7) {
             if ((_enet_protocol_handle_send_unreliable(r1, r23, r14, r5) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else if ((r12 | 0) == 3) {
             if ((_enet_protocol_handle_verify_connect(r1, r2, r23, r14) | 0) == 0) {
-              r3 = 850;
+              r3 = 851;
               break;
             } else {
-              break L1089;
+              break L1090;
             }
           } else {
-            break L1089;
+            break L1090;
           }
         } while (0);
         do {
-          if (r3 == 850) {
+          if (r3 == 851) {
             r3 = 0;
             if ((r23 | 0) == 0) {
               r27 = 0;
               break;
             } else {
               r26 = r23;
-              r3 = 851;
+              r3 = 852;
               break;
             }
           }
         } while (0);
         do {
-          if (r3 == 851) {
+          if (r3 == 852) {
             r3 = 0;
             r12 = HEAP8[r15];
             if (r12 << 24 >> 24 >= 0) {
@@ -13766,7 +13815,7 @@ function _enet_protocol_handle_incoming_commands(r1, r2) {
               break;
             }
             if (r16) {
-              break L1089;
+              break L1090;
             }
             r13 = _htons((tempInt = HEAPU8[r25] | HEAPU8[r25 + 1 | 0] << 8, tempInt << 16 >> 16));
             r22 = HEAP32[r26 + 36 >> 2];
@@ -13793,7 +13842,7 @@ function _enet_protocol_handle_incoming_commands(r1, r2) {
           r15 = r14;
           r24 = r13;
         } else {
-          break L1089;
+          break L1090;
         }
       }
     }
@@ -13868,19 +13917,19 @@ function _enet_protocol_handle_acknowledge(r1, r2, r3, r4) {
   r13 = HEAP32[r15 >> 2];
   do {
     if ((r13 | 0) == 0) {
-      r6 = 884;
+      r6 = 885;
     } else {
       r16 = HEAP32[r8];
       r17 = r16 - r13 | 0;
       if ((r17 >>> 0 > 86399999 ? r13 - r16 | 0 : r17) >>> 0 < HEAP32[r5 + 33] >>> 0) {
         break;
       } else {
-        r6 = 884;
+        r6 = 885;
         break;
       }
     }
   } while (0);
-  if (r6 == 884) {
+  if (r6 == 885) {
     HEAP32[r5 + 38] = HEAP32[r14];
     HEAP32[r5 + 40] = HEAP32[r10];
     HEAP32[r14] = HEAP32[r11];
@@ -13946,24 +13995,24 @@ function _enet_protocol_handle_connect(r1, r2) {
   r6 = (r1 + 36 | 0) >> 2;
   r9 = HEAP32[r6];
   r10 = (r1 + 40 | 0) >> 2;
-  L1178 : do {
+  L1179 : do {
     if ((HEAP32[r10] | 0) > 0) {
       r11 = r1 + 10348 | 0;
       r12 = r1 + 10352 | 0;
       r13 = r2 + 40 | 0;
       r14 = r9;
-      L1180 : while (1) {
+      L1181 : while (1) {
         do {
           if ((HEAP32[r14 + 36 >> 2] | 0) != 0) {
             if ((HEAP32[r14 + 24 >> 2] | 0) != (HEAP32[r11 >> 2] | 0)) {
               break;
             }
-            if (HEAP16[r14 + 28 >> 1] << 16 >> 16 != HEAP16[r12 >> 1] << 16 >> 16) {
+            if ((HEAP16[r14 + 28 >> 1] | 0) != (HEAP16[r12 >> 1] | 0)) {
               break;
             }
             if ((HEAP32[r14 + 16 >> 2] | 0) == (HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0)) {
               r8 = 0;
-              break L1180;
+              break L1181;
             }
           }
         } while (0);
@@ -13973,7 +14022,7 @@ function _enet_protocol_handle_connect(r1, r2) {
           r14 = r15;
         } else {
           r17 = r16;
-          break L1178;
+          break L1179;
         }
       }
       STACKTOP = r4;
@@ -14020,80 +14069,87 @@ function _enet_protocol_handle_connect(r1, r2) {
   HEAP32[r17 >> 2] = HEAP32[r7 >> 2];
   HEAP32[r17 + 4 >> 2] = r13;
   r13 = r2 + 4 | 0;
-  HEAP16[r14 + 12 >> 1] = _htons((tempInt = HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8, tempInt << 16 >> 16));
-  r13 = r2 + 20 | 0;
+  r17 = _htons((tempInt = HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8, tempInt << 16 >> 16));
+  HEAP16[r14 + 12 >> 1] = r17;
+  r17 = r2 + 20 | 0;
+  r13 = _htonl(HEAPU8[r17] | HEAPU8[r17 + 1 | 0] << 8 | HEAPU8[r17 + 2 | 0] << 16 | HEAPU8[r17 + 3 | 0] << 24 | 0);
   r17 = (r14 + 48 | 0) >> 2;
-  HEAP32[r17] = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
+  HEAP32[r17] = r13;
   r13 = r2 + 24 | 0;
-  HEAP32[r14 + 52 >> 2] = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
-  r13 = r2 + 28 | 0;
+  r7 = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
+  HEAP32[r14 + 52 >> 2] = r7;
+  r7 = r2 + 28 | 0;
+  r13 = _htonl(HEAPU8[r7] | HEAPU8[r7 + 1 | 0] << 8 | HEAPU8[r7 + 2 | 0] << 16 | HEAPU8[r7 + 3 | 0] << 24 | 0);
   r7 = r14 + 132 | 0;
-  HEAP32[r7 >> 2] = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
+  HEAP32[r7 >> 2] = r13;
   r13 = r2 + 32 | 0;
-  r12 = r14 + 124 | 0;
-  HEAP32[r12 >> 2] = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
-  r13 = r2 + 36 | 0;
-  r11 = r14 + 128 | 0;
-  HEAP32[r11 >> 2] = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
-  r13 = r2 + 44 | 0;
-  HEAP32[r14 + 376 >> 2] = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
-  r13 = HEAP8[r2 + 6 | 0];
-  if (r13 << 24 >> 24 == -1) {
+  r12 = _htonl(HEAPU8[r13] | HEAPU8[r13 + 1 | 0] << 8 | HEAPU8[r13 + 2 | 0] << 16 | HEAPU8[r13 + 3 | 0] << 24 | 0);
+  r13 = r14 + 124 | 0;
+  HEAP32[r13 >> 2] = r12;
+  r12 = r2 + 36 | 0;
+  r11 = _htonl(HEAPU8[r12] | HEAPU8[r12 + 1 | 0] << 8 | HEAPU8[r12 + 2 | 0] << 16 | HEAPU8[r12 + 3 | 0] << 24 | 0);
+  r12 = r14 + 128 | 0;
+  HEAP32[r12 >> 2] = r11;
+  r11 = r2 + 44 | 0;
+  r16 = _htonl(HEAPU8[r11] | HEAPU8[r11 + 1 | 0] << 8 | HEAPU8[r11 + 2 | 0] << 16 | HEAPU8[r11 + 3 | 0] << 24 | 0);
+  HEAP32[r14 + 376 >> 2] = r16;
+  r16 = HEAP8[r2 + 6 | 0];
+  if (r16 << 24 >> 24 == -1) {
     r18 = HEAP8[r14 + 20 | 0];
   } else {
-    r18 = r13;
+    r18 = r16;
   }
-  r13 = r18 + 1 & 3;
-  r16 = r14 + 20 | 0;
-  if (r13 << 24 >> 24 == HEAP8[r16] << 24 >> 24) {
+  r16 = r18 + 1 & 3;
+  r11 = r14 + 20 | 0;
+  if (r16 << 24 >> 24 == (HEAP8[r11] | 0)) {
     r19 = r18 + 2 & 3;
   } else {
-    r19 = r13;
+    r19 = r16;
   }
-  HEAP8[r16] = r19;
-  r16 = HEAP8[r2 + 7 | 0];
-  if (r16 << 24 >> 24 == -1) {
+  HEAP8[r11] = r19;
+  r11 = HEAP8[r2 + 7 | 0];
+  if (r11 << 24 >> 24 == -1) {
     r20 = HEAP8[r14 + 21 | 0];
   } else {
-    r20 = r16;
+    r20 = r11;
   }
-  r16 = r20 + 1 & 3;
-  r13 = r14 + 21 | 0;
-  if (r16 << 24 >> 24 == HEAP8[r13] << 24 >> 24) {
+  r11 = r20 + 1 & 3;
+  r16 = r14 + 21 | 0;
+  if (r11 << 24 >> 24 == (HEAP8[r16] | 0)) {
     r21 = r20 + 2 & 3;
   } else {
-    r21 = r16;
+    r21 = r11;
   }
-  HEAP8[r13] = r21;
-  L1211 : do {
+  HEAP8[r16] = r21;
+  L1212 : do {
     if ((r6 | 0) > 0) {
-      r13 = HEAP32[r10], r16 = r13 >> 1;
+      r16 = HEAP32[r10], r11 = r16 >> 1;
       while (1) {
-        HEAP16[r16] = 0;
-        HEAP16[r16 + 1] = 0;
-        HEAP16[r16 + 19] = 0;
-        HEAP16[r16 + 20] = 0;
-        _enet_list_clear(r13 + 44 | 0);
-        _enet_list_clear(r13 + 52 | 0);
-        r20 = r13 + 60 | 0;
-        _memset(r13 + 4 | 0, 0, 34);
+        HEAP16[r11] = 0;
+        HEAP16[r11 + 1] = 0;
+        HEAP16[r11 + 19] = 0;
+        HEAP16[r11 + 20] = 0;
+        _enet_list_clear(r16 + 44 | 0);
+        _enet_list_clear(r16 + 52 | 0);
+        r20 = r16 + 60 | 0;
+        _memset(r16 + 4 | 0, 0, 34);
         if (r20 >>> 0 < (HEAP32[r10] + (r6 * 60 & -1) | 0) >>> 0) {
-          r13 = r20, r16 = r13 >> 1;
+          r16 = r20, r11 = r16 >> 1;
         } else {
-          break L1211;
+          break L1212;
         }
       }
     }
   } while (0);
   r10 = r2 + 8 | 0;
-  r13 = _htonl(HEAPU8[r10] | HEAPU8[r10 + 1 | 0] << 8 | HEAPU8[r10 + 2 | 0] << 16 | HEAPU8[r10 + 3 | 0] << 24 | 0);
-  if (r13 >>> 0 < 576) {
+  r16 = _htonl(HEAPU8[r10] | HEAPU8[r10 + 1 | 0] << 8 | HEAPU8[r10 + 2 | 0] << 16 | HEAPU8[r10 + 3 | 0] << 24 | 0);
+  if (r16 >>> 0 < 576) {
     r22 = 576;
   } else {
-    r22 = r13 >>> 0 > 4096 ? 4096 : r13;
+    r22 = r16 >>> 0 > 4096 ? 4096 : r16;
   }
-  r13 = r14 + 176 | 0;
-  HEAP32[r13 >> 2] = r22;
+  r16 = r14 + 176 | 0;
+  HEAP32[r16 >> 2] = r22;
   r22 = (r1 + 16 | 0) >> 2;
   r10 = HEAP32[r22];
   do {
@@ -14102,33 +14158,33 @@ function _enet_protocol_handle_connect(r1, r2) {
         HEAP32[r14 + 180 >> 2] = 32768;
         break;
       } else {
-        r16 = HEAP32[r22];
-        if ((r16 | 0) == 0) {
-          r3 = 937;
+        r11 = HEAP32[r22];
+        if ((r11 | 0) == 0) {
+          r3 = 938;
           break;
         } else {
-          r23 = r16;
-          r3 = 936;
+          r23 = r11;
+          r3 = 937;
           break;
         }
       }
     } else {
       r23 = r10;
-      r3 = 936;
+      r3 = 937;
     }
   } while (0);
   do {
-    if (r3 == 936) {
+    if (r3 == 937) {
       r10 = HEAP32[r17];
       if ((r10 | 0) == 0) {
-        r3 = 937;
+        r3 = 938;
         break;
       }
       HEAP32[r14 + 180 >> 2] = (r23 >>> 0 < r10 >>> 0 ? r23 : r10) >>> 16 << 12;
       break;
     }
   } while (0);
-  if (r3 == 937) {
+  if (r3 == 938) {
     r3 = HEAP32[r22];
     r23 = HEAP32[r17];
     HEAP32[r14 + 180 >> 2] = (r3 >>> 0 > r23 >>> 0 ? r3 : r23) >>> 16 << 12;
@@ -14170,7 +14226,7 @@ function _enet_protocol_handle_connect(r1, r2) {
   HEAP8[r5 + 6 | 0] = r19;
   HEAP8[r5 + 7 | 0] = r21;
   r21 = r5 + 8 | 0;
-  tempBigInt = _htonl(HEAP32[r13 >> 2]);
+  tempBigInt = _htonl(HEAP32[r16 >> 2]);
   HEAP8[r21] = tempBigInt & 255;
   tempBigInt = tempBigInt >> 8;
   HEAP8[r21 + 1 | 0] = tempBigInt & 255;
@@ -14224,7 +14280,7 @@ function _enet_protocol_handle_connect(r1, r2) {
   tempBigInt = tempBigInt >> 8;
   HEAP8[r21 + 3 | 0] = tempBigInt & 255;
   r21 = r5 + 32 | 0;
-  tempBigInt = _htonl(HEAP32[r12 >> 2]);
+  tempBigInt = _htonl(HEAP32[r13 >> 2]);
   HEAP8[r21] = tempBigInt & 255;
   tempBigInt = tempBigInt >> 8;
   HEAP8[r21 + 1 | 0] = tempBigInt & 255;
@@ -14233,7 +14289,7 @@ function _enet_protocol_handle_connect(r1, r2) {
   tempBigInt = tempBigInt >> 8;
   HEAP8[r21 + 3 | 0] = tempBigInt & 255;
   r21 = r5 + 36 | 0;
-  tempBigInt = _htonl(HEAP32[r11 >> 2]);
+  tempBigInt = _htonl(HEAP32[r12 >> 2]);
   HEAP8[r21] = tempBigInt & 255;
   tempBigInt = tempBigInt >> 8;
   HEAP8[r21 + 1 | 0] = tempBigInt & 255;
@@ -14290,32 +14346,35 @@ function _enet_protocol_handle_verify_connect(r1, r2, r3, r4) {
         HEAP32[r6 >> 2] = r7;
       }
       r6 = r4 + 4 | 0;
-      HEAP16[r3 + 12 >> 1] = _htons((tempInt = HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8, tempInt << 16 >> 16));
+      r8 = _htons((tempInt = HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8, tempInt << 16 >> 16));
+      HEAP16[r3 + 12 >> 1] = r8;
       HEAP8[r3 + 21 | 0] = HEAP8[r4 + 6 | 0];
       HEAP8[r3 + 20 | 0] = HEAP8[r4 + 7 | 0];
-      r6 = r4 + 8 | 0;
-      r8 = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
-      if (r8 >>> 0 < 576) {
+      r8 = r4 + 8 | 0;
+      r6 = _htonl(HEAPU8[r8] | HEAPU8[r8 + 1 | 0] << 8 | HEAPU8[r8 + 2 | 0] << 16 | HEAPU8[r8 + 3 | 0] << 24 | 0);
+      if (r6 >>> 0 < 576) {
         r9 = 576;
       } else {
-        r9 = r8 >>> 0 > 4096 ? 4096 : r8;
+        r9 = r6 >>> 0 > 4096 ? 4096 : r6;
       }
-      r8 = r3 + 176 | 0;
-      if (r9 >>> 0 < HEAP32[r8 >> 2] >>> 0) {
-        HEAP32[r8 >> 2] = r9;
+      r6 = r3 + 176 | 0;
+      if (r9 >>> 0 < HEAP32[r6 >> 2] >>> 0) {
+        HEAP32[r6 >> 2] = r9;
       }
-      r8 = r4 + 12 | 0;
+      r6 = r4 + 12 | 0;
+      r8 = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
+      r6 = r8 >>> 0 < 4096 ? 4096 : r8;
+      r8 = r6 >>> 0 > 32768 ? 32768 : r6;
+      r6 = r3 + 180 | 0;
+      if (r8 >>> 0 < HEAP32[r6 >> 2] >>> 0) {
+        HEAP32[r6 >> 2] = r8;
+      }
+      r8 = r4 + 20 | 0;
       r6 = _htonl(HEAPU8[r8] | HEAPU8[r8 + 1 | 0] << 8 | HEAPU8[r8 + 2 | 0] << 16 | HEAPU8[r8 + 3 | 0] << 24 | 0);
-      r8 = r6 >>> 0 < 4096 ? 4096 : r6;
-      r6 = r8 >>> 0 > 32768 ? 32768 : r8;
-      r8 = r3 + 180 | 0;
-      if (r6 >>> 0 < HEAP32[r8 >> 2] >>> 0) {
-        HEAP32[r8 >> 2] = r6;
-      }
-      r6 = r4 + 20 | 0;
-      HEAP32[r3 + 48 >> 2] = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
+      HEAP32[r3 + 48 >> 2] = r6;
       r6 = r4 + 24 | 0;
-      HEAP32[r3 + 52 >> 2] = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
+      r8 = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
+      HEAP32[r3 + 52 >> 2] = r8;
       _enet_protocol_notify_connect(r1, r3, r2);
       r5 = 0;
       return r5;
@@ -14339,34 +14398,34 @@ function _enet_protocol_handle_disconnect(r1, r2, r3) {
   do {
     if ((r6 | 0) == 3) {
       HEAP32[r1 + 32 >> 2] = 1;
-      r4 = 979;
+      r4 = 980;
       break;
     } else if ((r6 | 0) == 5 | (r6 | 0) == 6) {
-      if (HEAP8[r3 | 0] << 24 >> 24 < 0) {
+      if ((HEAP8[r3 | 0] | 0) < 0) {
         HEAP32[r5] = 8;
         break;
       } else {
         _enet_protocol_dispatch_state(r1, r2, 9);
-        r4 = 983;
+        r4 = 984;
         break;
       }
     } else if ((r6 | 0) == 4 | (r6 | 0) == 7) {
       _enet_protocol_dispatch_state(r1, r2, 9);
-      r4 = 983;
+      r4 = 984;
       break;
     } else {
-      r4 = 979;
+      r4 = 980;
     }
   } while (0);
   do {
-    if (r4 == 979) {
+    if (r4 == 980) {
       _enet_peer_reset(r2);
-      r4 = 983;
+      r4 = 984;
       break;
     }
   } while (0);
   do {
-    if (r4 == 983) {
+    if (r4 == 984) {
       if ((HEAP32[r5] | 0) != 0) {
         break;
       }
@@ -14374,7 +14433,8 @@ function _enet_protocol_handle_disconnect(r1, r2, r3) {
     }
   } while (0);
   r5 = r3 + 4 | 0;
-  HEAP32[r2 + 376 >> 2] = _htonl(HEAPU8[r5] | HEAPU8[r5 + 1 | 0] << 8 | HEAPU8[r5 + 2 | 0] << 16 | HEAPU8[r5 + 3 | 0] << 24 | 0);
+  r3 = _htonl(HEAPU8[r5] | HEAPU8[r5 + 1 | 0] << 8 | HEAPU8[r5 + 2 | 0] << 16 | HEAPU8[r5 + 3 | 0] << 24 | 0);
+  HEAP32[r2 + 376 >> 2] = r3;
   return;
 }
 function _enet_protocol_handle_send_reliable(r1, r2, r3, r4) {
@@ -14559,9 +14619,9 @@ function _enet_protocol_handle_send_fragment(r1, r2, r3, r4) {
   }
   r15 = r8 + (r1 * 60 & -1) + 44 | 0;
   r18 = HEAP32[r8 + (r1 * 60 & -1) + 48 >> 2];
-  L1368 : do {
+  L1369 : do {
     if ((r18 | 0) == (r15 | 0)) {
-      r5 = 1053;
+      r5 = 1054;
     } else {
       r1 = HEAP16[r13 >> 1];
       r8 = (r12 & 65535) < (r1 & 65535);
@@ -14573,22 +14633,22 @@ function _enet_protocol_handle_send_fragment(r1, r2, r3, r4) {
         do {
           if (r8) {
             if (r23) {
-              r5 = 1046;
+              r5 = 1047;
               break;
             } else {
-              r5 = 1053;
-              break L1368;
+              r5 = 1054;
+              break L1369;
             }
           } else {
             if (r23) {
               break;
             } else {
-              r5 = 1046;
+              r5 = 1047;
               break;
             }
           }
         } while (0);
-        if (r5 == 1046) {
+        if (r5 == 1047) {
           r5 = 0;
           r24 = HEAP16[r22 >> 1];
           if ((r24 & 65535) <= (r12 & 65535)) {
@@ -14597,14 +14657,14 @@ function _enet_protocol_handle_send_fragment(r1, r2, r3, r4) {
         }
         r23 = HEAP32[r20 + 1];
         if ((r23 | 0) == (r15 | 0)) {
-          r5 = 1053;
-          break L1368;
+          r5 = 1054;
+          break L1369;
         } else {
           r19 = r23, r20 = r19 >> 2;
         }
       }
       if ((r24 & 65535) < (r12 & 65535)) {
-        r5 = 1053;
+        r5 = 1054;
         break;
       }
       if ((HEAP8[r19 + 12 | 0] & 15) << 24 >> 24 != 8) {
@@ -14619,7 +14679,7 @@ function _enet_protocol_handle_send_fragment(r1, r2, r3, r4) {
       }
       if ((r10 | 0) == (HEAP32[r20 + 15] | 0)) {
         if ((r19 | 0) == 0) {
-          r5 = 1053;
+          r5 = 1054;
           break;
         } else {
           r25 = r21;
@@ -14633,7 +14693,7 @@ function _enet_protocol_handle_send_fragment(r1, r2, r3, r4) {
     }
   } while (0);
   do {
-    if (r5 == 1053) {
+    if (r5 == 1054) {
       _memcpy(r7 | 0, r3 | 0, 48);
       r21 = _enet_packet_create(0, r17, 1);
       if ((r21 | 0) == 0) {
@@ -14690,31 +14750,33 @@ function _enet_protocol_handle_bandwidth_limit(r1, r2, r3) {
     return r5;
   }
   r6 = r3 + 4 | 0;
-  r7 = (r2 + 48 | 0) >> 2;
-  HEAP32[r7] = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
-  r6 = r3 + 8 | 0;
-  HEAP32[r2 + 52 >> 2] = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
+  r7 = _htonl(HEAPU8[r6] | HEAPU8[r6 + 1 | 0] << 8 | HEAPU8[r6 + 2 | 0] << 16 | HEAPU8[r6 + 3 | 0] << 24 | 0);
+  r6 = (r2 + 48 | 0) >> 2;
+  HEAP32[r6] = r7;
+  r7 = r3 + 8 | 0;
+  r3 = _htonl(HEAPU8[r7] | HEAPU8[r7 + 1 | 0] << 8 | HEAPU8[r7 + 2 | 0] << 16 | HEAPU8[r7 + 3 | 0] << 24 | 0);
+  HEAP32[r2 + 52 >> 2] = r3;
   do {
-    if ((HEAP32[r7] | 0) == 0) {
+    if ((HEAP32[r6] | 0) == 0) {
       if ((HEAP32[r1 + 16 >> 2] | 0) != 0) {
-        r4 = 1078;
+        r4 = 1079;
         break;
       }
       HEAP32[r2 + 180 >> 2] = 32768;
       break;
     } else {
-      r4 = 1078;
+      r4 = 1079;
     }
   } while (0);
-  if (r4 == 1078) {
-    r4 = HEAP32[r7];
-    r7 = HEAP32[r1 + 16 >> 2];
-    HEAP32[r2 + 180 >> 2] = (r4 >>> 0 < r7 >>> 0 ? r4 : r7) >>> 16 << 12;
+  if (r4 == 1079) {
+    r4 = HEAP32[r6];
+    r6 = HEAP32[r1 + 16 >> 2];
+    HEAP32[r2 + 180 >> 2] = (r4 >>> 0 < r6 >>> 0 ? r4 : r6) >>> 16 << 12;
   }
-  r7 = (r2 + 180 | 0) >> 2;
-  r2 = HEAP32[r7];
+  r6 = (r2 + 180 | 0) >> 2;
+  r2 = HEAP32[r6];
   if (r2 >>> 0 < 4096) {
-    HEAP32[r7] = 4096;
+    HEAP32[r6] = 4096;
     r5 = 0;
     return r5;
   }
@@ -14722,22 +14784,25 @@ function _enet_protocol_handle_bandwidth_limit(r1, r2, r3) {
     r5 = 0;
     return r5;
   }
-  HEAP32[r7] = 32768;
+  HEAP32[r6] = 32768;
   r5 = 0;
   return r5;
 }
 function _enet_protocol_handle_throttle_configure(r1, r2) {
-  var r3, r4;
+  var r3, r4, r5;
   if ((HEAP32[r1 + 36 >> 2] - 5 | 0) >>> 0 >= 2) {
     r3 = -1;
     return r3;
   }
   r4 = r2 + 4 | 0;
-  HEAP32[r1 + 132 >> 2] = _htonl(HEAPU8[r4] | HEAPU8[r4 + 1 | 0] << 8 | HEAPU8[r4 + 2 | 0] << 16 | HEAPU8[r4 + 3 | 0] << 24 | 0);
-  r4 = r2 + 8 | 0;
-  HEAP32[r1 + 124 >> 2] = _htonl(HEAPU8[r4] | HEAPU8[r4 + 1 | 0] << 8 | HEAPU8[r4 + 2 | 0] << 16 | HEAPU8[r4 + 3 | 0] << 24 | 0);
+  r5 = _htonl(HEAPU8[r4] | HEAPU8[r4 + 1 | 0] << 8 | HEAPU8[r4 + 2 | 0] << 16 | HEAPU8[r4 + 3 | 0] << 24 | 0);
+  HEAP32[r1 + 132 >> 2] = r5;
+  r5 = r2 + 8 | 0;
+  r4 = _htonl(HEAPU8[r5] | HEAPU8[r5 + 1 | 0] << 8 | HEAPU8[r5 + 2 | 0] << 16 | HEAPU8[r5 + 3 | 0] << 24 | 0);
+  HEAP32[r1 + 124 >> 2] = r4;
   r4 = r2 + 12 | 0;
-  HEAP32[r1 + 128 >> 2] = _htonl(HEAPU8[r4] | HEAPU8[r4 + 1 | 0] << 8 | HEAPU8[r4 + 2 | 0] << 16 | HEAPU8[r4 + 3 | 0] << 24 | 0);
+  r2 = _htonl(HEAPU8[r4] | HEAPU8[r4 + 1 | 0] << 8 | HEAPU8[r4 + 2 | 0] << 16 | HEAPU8[r4 + 3 | 0] << 24 | 0);
+  HEAP32[r1 + 128 >> 2] = r2;
   r3 = 0;
   return r3;
 }
@@ -14810,62 +14875,62 @@ function _enet_protocol_handle_send_unreliable_fragment(r1, r2, r3, r4) {
   }
   r13 = r6 + (r1 * 60 & -1) + 52 | 0;
   r17 = HEAP32[r6 + (r1 * 60 & -1) + 56 >> 2];
-  L1452 : do {
+  L1453 : do {
     if ((r17 | 0) == (r13 | 0)) {
-      r5 = 1116;
+      r5 = 1117;
     } else {
       r1 = HEAP16[r12 >> 1];
       r6 = (r10 & 65535) < (r1 & 65535);
       r18 = r17, r19 = r18 >> 2;
-      L1454 : while (1) {
+      L1455 : while (1) {
         r20 = r18;
         r21 = r18 + 8 | 0;
         r22 = HEAPU16[r21 >> 1] < (r1 & 65535);
         do {
           if (r6) {
             if (r22) {
-              r5 = 1107;
+              r5 = 1108;
               break;
             } else {
-              r5 = 1116;
-              break L1452;
+              r5 = 1117;
+              break L1453;
             }
           } else {
             if (r22) {
               break;
             } else {
-              r5 = 1107;
+              r5 = 1108;
               break;
             }
           }
         } while (0);
         do {
-          if (r5 == 1107) {
+          if (r5 == 1108) {
             r5 = 0;
             r22 = HEAP16[r21 >> 1];
             if ((r22 & 65535) < (r10 & 65535)) {
-              r5 = 1116;
-              break L1452;
+              r5 = 1117;
+              break L1453;
             }
             if ((r22 & 65535) > (r10 & 65535)) {
               break;
             }
             r23 = HEAP16[r20 + 10 >> 1];
             if ((r23 & 65535) <= (r11 & 65535)) {
-              break L1454;
+              break L1455;
             }
           }
         } while (0);
         r21 = HEAP32[r19 + 1];
         if ((r21 | 0) == (r13 | 0)) {
-          r5 = 1116;
-          break L1452;
+          r5 = 1117;
+          break L1453;
         } else {
           r18 = r21, r19 = r18 >> 2;
         }
       }
       if ((r23 & 65535) < (r11 & 65535)) {
-        r5 = 1116;
+        r5 = 1117;
         break;
       }
       if ((HEAP8[r18 + 12 | 0] & 15) << 24 >> 24 != 12) {
@@ -14878,7 +14943,7 @@ function _enet_protocol_handle_send_unreliable_fragment(r1, r2, r3, r4) {
       }
       if ((r15 | 0) == (HEAP32[r19 + 15] | 0)) {
         if ((r18 | 0) == 0) {
-          r5 = 1116;
+          r5 = 1117;
           break;
         } else {
           r24 = r20;
@@ -14891,7 +14956,7 @@ function _enet_protocol_handle_send_unreliable_fragment(r1, r2, r3, r4) {
     }
   } while (0);
   do {
-    if (r5 == 1116) {
+    if (r5 == 1117) {
       r20 = _enet_packet_create(0, r16, 8);
       if ((r20 | 0) == 0) {
         r7 = -1;
@@ -14945,21 +15010,21 @@ function _enet_protocol_remove_sent_reliable_command(r1, r2, r3) {
   r5 = r1 + 200 | 0;
   r6 = r5 | 0;
   r7 = HEAP32[r6 >> 2];
-  L1495 : do {
+  L1496 : do {
     if ((r7 | 0) == (r5 | 0)) {
-      r4 = 1148;
+      r4 = 1149;
     } else {
       r8 = r7;
       while (1) {
-        if (HEAP16[r8 + 8 >> 1] << 16 >> 16 == r2 << 16 >> 16) {
-          if (HEAP8[r8 + 33 | 0] << 24 >> 24 == r3 << 24 >> 24) {
+        if ((HEAP16[r8 + 8 >> 1] | 0) == r2 << 16 >> 16) {
+          if ((HEAP8[r8 + 33 | 0] | 0) == r3 << 24 >> 24) {
             break;
           }
         }
         r9 = HEAP32[r8 >> 2];
         if ((r9 | 0) == (r5 | 0)) {
-          r4 = 1148;
-          break L1495;
+          r4 = 1149;
+          break L1496;
         } else {
           r8 = r9;
         }
@@ -14969,8 +15034,8 @@ function _enet_protocol_remove_sent_reliable_command(r1, r2, r3) {
       break;
     }
   } while (0);
-  L1502 : do {
-    if (r4 == 1148) {
+  L1503 : do {
+    if (r4 == 1149) {
       r7 = r1 + 216 | 0;
       r9 = HEAP32[r7 >> 2];
       if ((r9 | 0) == (r7 | 0)) {
@@ -14981,30 +15046,30 @@ function _enet_protocol_remove_sent_reliable_command(r1, r2, r3) {
       }
       while (1) {
         r9 = r13;
-        if (HEAP16[r9 + 30 >> 1] << 16 >> 16 == 0) {
+        if ((HEAP16[r9 + 30 >> 1] | 0) == 0) {
           r12 = 0;
-          r4 = 1169;
+          r4 = 1170;
           break;
         }
-        if (HEAP16[r13 + 8 >> 1] << 16 >> 16 == r2 << 16 >> 16) {
-          if (HEAP8[r13 + 33 | 0] << 24 >> 24 == r3 << 24 >> 24) {
+        if ((HEAP16[r13 + 8 >> 1] | 0) == r2 << 16 >> 16) {
+          if ((HEAP8[r13 + 33 | 0] | 0) == r3 << 24 >> 24) {
             r10 = r9;
             r11 = 0;
-            break L1502;
+            break L1503;
           }
         }
         r9 = HEAP32[r13 >> 2];
         if ((r9 | 0) == (r7 | 0)) {
           r12 = 0;
-          r4 = 1167;
+          r4 = 1168;
           break;
         } else {
           r13 = r9;
         }
       }
-      if (r4 == 1167) {
+      if (r4 == 1168) {
         return r12;
-      } else if (r4 == 1169) {
+      } else if (r4 == 1170) {
         return r12;
       }
     }
@@ -15110,7 +15175,7 @@ function _enet_protocol_send_acknowledgements(r1, r2) {
   r8 = (HEAP32[r6 >> 2] << 3) + r1 + 1612 | 0;
   r9 = r2 + 192 | 0;
   r10 = HEAP32[r9 >> 2];
-  L1555 : do {
+  L1556 : do {
     if ((r10 | 0) == (r9 | 0)) {
       r11 = r8;
       r12 = r5;
@@ -15165,7 +15230,7 @@ function _enet_protocol_send_acknowledgements(r1, r2) {
         if ((r20 | 0) == (r9 | 0)) {
           r11 = r23;
           r12 = r22;
-          break L1555;
+          break L1556;
         } else {
           r17 = r23;
           r18 = r20;
@@ -15200,7 +15265,7 @@ function _enet_protocol_check_timeouts(r1, r2, r3) {
   r15 = r2 + 148 | 0;
   r16 = r2 + 144 | 0;
   r17 = r7;
-  L1570 : while (1) {
+  L1571 : while (1) {
     r7 = HEAP32[r17 >> 2];
     r18 = HEAP32[r10 >> 2];
     r19 = r17 + 12 | 0;
@@ -15213,17 +15278,17 @@ function _enet_protocol_check_timeouts(r1, r2, r3) {
         r24 = HEAP32[r11];
         do {
           if ((r24 | 0) == 0) {
-            r4 = 1204;
+            r4 = 1205;
           } else {
             if ((r20 - r24 | 0) >>> 0 > 86399999) {
-              r4 = 1204;
+              r4 = 1205;
               break;
             }
             r25 = HEAP32[r11];
             break;
           }
         } while (0);
-        if (r4 == 1204) {
+        if (r4 == 1205) {
           r4 = 0;
           r24 = HEAP32[r19 >> 2];
           HEAP32[r11] = r24;
@@ -15235,13 +15300,13 @@ function _enet_protocol_check_timeouts(r1, r2, r3) {
             r26 = r24 - r25 | 0;
             r27 = r26 >>> 0 > 86399999 ? r25 - r24 | 0 : r26;
             if (r27 >>> 0 >= HEAP32[r15 >> 2] >>> 0) {
-              break L1570;
+              break L1571;
             }
             if (HEAP32[r23] >>> 0 < HEAP32[r17 + 20 >> 2] >>> 0) {
               break;
             }
             if (r27 >>> 0 >= HEAP32[r16 >> 2] >>> 0) {
-              break L1570;
+              break L1571;
             }
           }
         } while (0);
@@ -15260,13 +15325,13 @@ function _enet_protocol_check_timeouts(r1, r2, r3) {
     } while (0);
     if ((r7 | 0) == (r5 | 0)) {
       r9 = 0;
-      r4 = 1216;
+      r4 = 1217;
       break;
     } else {
       r17 = r7;
     }
   }
-  if (r4 == 1216) {
+  if (r4 == 1217) {
     return r9;
   }
   _enet_protocol_notify_disconnect(r1, r2, r3);
@@ -15327,7 +15392,7 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
   r46 = 0;
   r47 = 1;
   r48 = r6;
-  L1598 : while (1) {
+  L1599 : while (1) {
     r6 = HEAP32[r24 >> 2];
     r49 = r2;
     r50 = r45;
@@ -15335,12 +15400,12 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
     while (1) {
       r52 = r49;
       r53 = r51;
-      L1602 : while (1) {
+      L1603 : while (1) {
         r54 = r52;
         r55 = r52 + 32 | 0;
         r56 = HEAPU8[r55 + 1 | 0];
         if (r56 >>> 0 >= r6 >>> 0) {
-          r3 = 1224;
+          r3 = 1225;
           break;
         }
         r57 = HEAP32[r25 >> 2];
@@ -15357,19 +15422,19 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
         }
         do {
           if ((r53 | 0) == 0) {
-            if (HEAP16[r54 + 30 >> 1] << 16 >> 16 != 0) {
+            if ((HEAP16[r54 + 30 >> 1] | 0) != 0) {
               r62 = 0;
               r63 = r58;
               r64 = r60;
               r65 = r61;
-              break L1602;
+              break L1603;
             }
             if ((r59 & 4095) << 16 >> 16 != 0) {
               r62 = 0;
               r63 = r58;
               r64 = r60;
               r65 = r61;
-              break L1602;
+              break L1603;
             }
             r66 = r60 & 65535;
             if (HEAPU16[r57 + (r56 * 60 & -1) + (((r66 | 16) - 1 | 0) % 16 << 1) + 6 >> 1] > 4095) {
@@ -15385,7 +15450,7 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
               r63 = r58;
               r64 = r60;
               r65 = r61;
-              break L1602;
+              break L1603;
             } else {
               r67 = r53;
             }
@@ -15398,14 +15463,14 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
           r12 = r47;
           r13 = r11;
           r14 = r48;
-          r3 = 1255;
-          break L1598;
+          r3 = 1256;
+          break L1599;
         } else {
           r52 = r61;
           r53 = r67;
         }
       }
-      if (r3 == 1224) {
+      if (r3 == 1225) {
         r3 = 0;
         r62 = r53;
         r63 = 0;
@@ -15435,8 +15500,8 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
         r12 = r47;
         r13 = r11;
         r14 = r48;
-        r3 = 1257;
-        break L1598;
+        r3 = 1258;
+        break L1599;
       } else {
         r49 = r58;
         r50 = r70;
@@ -15446,29 +15511,29 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
     r51 = r55;
     r50 = HEAP32[((HEAP8[r51] & 15) << 2) + 411016 >> 2];
     if (r48 >>> 0 >= r30 >>> 0) {
-      r3 = 1242;
+      r3 = 1243;
       break;
     }
     r49 = r11 + 8 | 0;
     if (r49 >>> 0 >= r31 >>> 0) {
-      r3 = 1242;
+      r3 = 1243;
       break;
     }
     r6 = HEAP32[r32 >> 2] - HEAP32[r33] | 0;
     if (r6 >>> 0 < r50 >>> 0) {
-      r3 = 1242;
+      r3 = 1243;
       break;
     }
     if ((HEAP32[r68] | 0) != 0) {
       if ((r6 & 65535) >>> 0 < (HEAPU16[r52 + 28 >> 1] + r50 & 65535) >>> 0) {
-        r3 = 1242;
+        r3 = 1243;
         break;
       }
     }
     r6 = HEAP32[r52 >> 2];
     do {
       if (r65) {
-        if (HEAP16[r54 + 30 >> 1] << 16 >> 16 != 0) {
+        if ((HEAP16[r54 + 30 >> 1] | 0) != 0) {
           break;
         }
         r58 = r64 & 65535;
@@ -15485,7 +15550,8 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
     if ((HEAP32[r58 >> 2] | 0) == 0) {
       r61 = (HEAP32[r35 >> 2] << 2) + HEAP32[r34 >> 2] | 0;
       HEAP32[r60 >> 2] = r61;
-      HEAP32[r52 + 20 >> 2] = Math.imul(r61, HEAP32[r36 >> 2]);
+      r60 = Math.imul(r61, HEAP32[r36 >> 2]);
+      HEAP32[r52 + 20 >> 2] = r60;
     }
     if ((HEAP32[r38 >> 2] | 0) == (r37 | 0)) {
       HEAP32[r40 >> 2] = HEAP32[r58 >> 2] + HEAP32[r39 >> 2] | 0;
@@ -15511,35 +15577,23 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
     }
     HEAP32[r43 >> 2] = HEAP32[r43 >> 2] + 1 | 0;
     r58 = r48 + 48 | 0;
-    r61 = r71 + 8 | 0;
+    r60 = r71 + 8 | 0;
     if ((r6 | 0) == (r10 | 0)) {
       r12 = 0;
-      r13 = r61;
+      r13 = r60;
       r14 = r58;
-      r3 = 1256;
+      r3 = 1257;
       break;
     } else {
       r2 = r6;
-      r11 = r61, r9 = r11 >> 2;
+      r11 = r60, r9 = r11 >> 2;
       r45 = r69;
       r46 = r62;
       r47 = 0;
       r48 = r58;
     }
   }
-  if (r3 == 1255) {
-    r15 = r14;
-    r16 = r5;
-    r17 = r15 - r16 | 0;
-    r18 = (r17 | 0) / 48 & -1;
-    HEAP32[r4] = r18;
-    r19 = r13;
-    r20 = r8;
-    r21 = r19 - r20 | 0, r22 = r21 >> 3;
-    r23 = r22;
-    HEAP32[r7] = r23;
-    return r12;
-  } else if (r3 == 1256) {
+  if (r3 == 1256) {
     r15 = r14;
     r16 = r5;
     r17 = r15 - r16 | 0;
@@ -15563,7 +15617,19 @@ function _enet_protocol_send_reliable_outgoing_commands(r1, r2) {
     r23 = r22;
     HEAP32[r7] = r23;
     return r12;
-  } else if (r3 == 1242) {
+  } else if (r3 == 1258) {
+    r15 = r14;
+    r16 = r5;
+    r17 = r15 - r16 | 0;
+    r18 = (r17 | 0) / 48 & -1;
+    HEAP32[r4] = r18;
+    r19 = r13;
+    r20 = r8;
+    r21 = r19 - r20 | 0, r22 = r21 >> 3;
+    r23 = r22;
+    HEAP32[r7] = r23;
+    return r12;
+  } else if (r3 == 1243) {
     HEAP32[r1 + 60 >> 2] = 1;
     r12 = 0;
     r13 = r11;
@@ -15599,7 +15665,7 @@ function _enet_protocol_send_unreliable_outgoing_commands(r1, r2) {
   r10 = r2 + 224 | 0;
   r11 = r10 | 0;
   r12 = HEAP32[r11 >> 2];
-  L1649 : do {
+  L1650 : do {
     if ((r12 | 0) == (r10 | 0)) {
       r13 = r9;
       r14 = r6;
@@ -15614,7 +15680,7 @@ function _enet_protocol_send_unreliable_outgoing_commands(r1, r2) {
       r22 = r12;
       r23 = r9, r24 = r23 >> 2;
       r25 = r6;
-      L1651 : while (1) {
+      L1652 : while (1) {
         r26 = r23 + 8 | 0;
         r27 = r26 >>> 0 < r16 >>> 0;
         if (r25 >>> 0 < r15 >>> 0) {
@@ -15627,19 +15693,19 @@ function _enet_protocol_send_unreliable_outgoing_commands(r1, r2) {
           r30 = r28 + 32 | 0;
           r31 = HEAP32[((HEAP8[r30] & 15) << 2) + 411016 >> 2];
           if (!r27) {
-            break L1651;
+            break L1652;
           }
           r32 = HEAP32[r17 >> 2] - HEAP32[r18] | 0;
           if (r32 >>> 0 < r31 >>> 0) {
-            break L1651;
+            break L1652;
           }
           r33 = (r28 + 80 | 0) >> 2;
           if ((HEAP32[r33] | 0) == 0) {
-            r3 = 1268;
+            r3 = 1269;
             break;
           }
           if (r32 >>> 0 < (HEAPU16[r28 + 28 >> 1] + r31 | 0) >>> 0) {
-            break L1651;
+            break L1652;
           }
           r32 = HEAP32[r28 >> 2];
           if ((HEAP32[r33] | 0) == 0) {
@@ -15674,10 +15740,10 @@ function _enet_protocol_send_unreliable_outgoing_commands(r1, r2) {
               break;
             }
             r38 = r29;
-            if (HEAP16[r29 + 8 >> 1] << 16 >> 16 != r35 << 16 >> 16) {
+            if ((HEAP16[r29 + 8 >> 1] | 0) != r35 << 16 >> 16) {
               break;
             }
-            if (HEAP16[r38 + 10 >> 1] << 16 >> 16 != r36 << 16 >> 16) {
+            if ((HEAP16[r38 + 10 >> 1] | 0) != r36 << 16 >> 16) {
               break;
             }
             r37 = r38;
@@ -15686,12 +15752,12 @@ function _enet_protocol_send_unreliable_outgoing_commands(r1, r2) {
           if ((r29 | 0) == (r10 | 0)) {
             r13 = r23;
             r14 = r25;
-            break L1649;
+            break L1650;
           } else {
             r28 = r29;
           }
         }
-        if (r3 == 1268) {
+        if (r3 == 1269) {
           r3 = 0;
           r34 = HEAP32[r28 >> 2];
         }
@@ -15718,7 +15784,7 @@ function _enet_protocol_send_unreliable_outgoing_commands(r1, r2) {
         if ((r34 | 0) == (r10 | 0)) {
           r13 = r37;
           r14 = r27;
-          break L1649;
+          break L1650;
         } else {
           r22 = r34;
           r23 = r37, r24 = r23 >> 2;
@@ -15851,7 +15917,7 @@ function _enet_address_get_host(r1, r2, r3) {
   }
 }
 function _enet_socket_bind(r1, r2) {
-  var r3, r4, r5, r6;
+  var r3, r4, r5, r6, r7;
   r3 = STACKTOP;
   STACKTOP = STACKTOP + 20 | 0;
   r4 = r3;
@@ -15870,7 +15936,8 @@ function _enet_socket_bind(r1, r2) {
     STACKTOP = r3;
     return r6;
   } else {
-    HEAP16[r4 + 4 >> 1] = _htons(HEAP16[r2 + 4 >> 1]);
+    r7 = _htons(HEAP16[r2 + 4 >> 1]);
+    HEAP16[r4 + 4 >> 1] = r7;
     HEAP32[r4 + 8 >> 2] = HEAP32[r2 >> 2];
     r5 = r4;
     r6 = _bind(r1, r5, 20);
@@ -15920,12 +15987,14 @@ function _enet_socket_connect(r1, r2) {
   HEAP32[r5 + 3] = 0;
   HEAP32[r5 + 4] = 0;
   HEAP32[r4 >> 2] = 1;
-  HEAP16[r4 + 4 >> 1] = _htons(HEAP16[r2 + 4 >> 1]);
+  r5 = _htons(HEAP16[r2 + 4 >> 1]);
+  HEAP16[r4 + 4 >> 1] = r5;
   HEAP32[r4 + 8 >> 2] = HEAP32[r2 >> 2];
   r2 = _connect(r1, r4, 20);
   do {
     if ((r2 | 0) == -1) {
-      if ((HEAP32[___errno_location() >> 2] | 0) == 119) {
+      r4 = ___errno_location();
+      if ((HEAP32[r4 >> 2] | 0) == 119) {
         r6 = 0;
       } else {
         break;
@@ -15957,7 +16026,8 @@ function _enet_socket_accept(r1, r2) {
     return r8;
   }
   HEAP32[r2 >> 2] = HEAP32[r4 + 8 >> 2];
-  HEAP16[r2 + 4 >> 1] = _htons(HEAP16[r4 + 4 >> 1]);
+  r6 = _htons(HEAP16[r4 + 4 >> 1]);
+  HEAP16[r2 + 4 >> 1] = r6;
   STACKTOP = r3;
   return r8;
 }
@@ -15993,7 +16063,8 @@ function _enet_socket_send(r1, r2, r3, r4) {
     HEAP32[r10 + 3] = 0;
     HEAP32[r10 + 4] = 0;
     HEAP32[r8 >> 2] = 1;
-    HEAP16[r8 + 4 >> 1] = _htons(HEAP16[r2 + 4 >> 1]);
+    r10 = _htons(HEAP16[r2 + 4 >> 1]);
+    HEAP16[r8 + 4 >> 1] = r10;
     HEAP32[r8 + 8 >> 2] = HEAP32[r2 >> 2];
     HEAP32[r7] = r9;
     HEAP32[r7 + 1] = 20;
@@ -16006,7 +16077,8 @@ function _enet_socket_send(r1, r2, r3, r4) {
     STACKTOP = r5;
     return r11;
   }
-  r11 = ((HEAP32[___errno_location() >> 2] | 0) != 11) << 31 >> 31;
+  r4 = ___errno_location();
+  r11 = ((HEAP32[r4 >> 2] | 0) != 11) << 31 >> 31;
   STACKTOP = r5;
   return r11;
 }
@@ -16033,7 +16105,8 @@ function _enet_socket_receive(r1, r2, r3, r4) {
   HEAP32[r7 + 3] = r4;
   r4 = _recvmsg(r1, r6, 0);
   if ((r4 | 0) == -1) {
-    r10 = ((HEAP32[___errno_location() >> 2] | 0) != 11) << 31 >> 31;
+    r6 = ___errno_location();
+    r10 = ((HEAP32[r6 >> 2] | 0) != 11) << 31 >> 31;
     STACKTOP = r5;
     return r10;
   }
@@ -16043,31 +16116,34 @@ function _enet_socket_receive(r1, r2, r3, r4) {
     return r10;
   }
   HEAP32[r2 >> 2] = HEAP32[r8 + 8 >> 2];
-  HEAP16[r2 + 4 >> 1] = _htons(HEAP16[r8 + 4 >> 1]);
+  r9 = _htons(HEAP16[r8 + 4 >> 1]);
+  HEAP16[r2 + 4 >> 1] = r9;
   r10 = r4;
   STACKTOP = r5;
   return r10;
 }
 function _enet_socketset_select(r1, r2, r3, r4) {
-  var r5, r6;
+  var r5, r6, r7;
   r5 = STACKTOP;
   STACKTOP = STACKTOP + 8 | 0;
   r6 = r5;
-  HEAP32[r6 >> 2] = Math.floor((r4 >>> 0) / 1e3);
+  r7 = Math.floor((r4 >>> 0) / 1e3);
+  HEAP32[r6 >> 2] = r7;
   HEAP32[r6 + 4 >> 2] = (r4 >>> 0) % 1e3 * 1e3 & -1;
   r4 = _select(r1 + 1 | 0, r2, r3, 0, r6);
   STACKTOP = r5;
   return r4;
 }
 function _enet_socket_wait(r1, r2, r3) {
-  var r4, r5, r6, r7, r8;
+  var r4, r5, r6, r7, r8, r9;
   r4 = r2 >> 2;
   r2 = STACKTOP;
   STACKTOP = STACKTOP + 24 | 0;
   r5 = r2;
   r6 = r2 + 8;
   r7 = r2 + 16;
-  HEAP32[r7 >> 2] = Math.floor((r3 >>> 0) / 1e3);
+  r8 = Math.floor((r3 >>> 0) / 1e3);
+  HEAP32[r7 >> 2] = r8;
   HEAP32[r7 + 4 >> 2] = (r3 >>> 0) % 1e3 * 1e3 & -1;
   r3 = r5;
   HEAP32[r3 >> 2] = 0;
@@ -16085,15 +16161,15 @@ function _enet_socket_wait(r1, r2, r3) {
   }
   r3 = _select(r1 + 1 | 0, r5, r6, 0, r7);
   if ((r3 | 0) < 0) {
-    r8 = -1;
+    r9 = -1;
     STACKTOP = r2;
-    return r8;
+    return r9;
   }
   HEAP32[r4] = 0;
   if ((r3 | 0) == 0) {
-    r8 = 0;
+    r9 = 0;
     STACKTOP = r2;
-    return r8;
+    return r9;
   }
   r3 = r1 >>> 5;
   r7 = 1 << (r1 & 31);
@@ -16101,14 +16177,14 @@ function _enet_socket_wait(r1, r2, r3) {
     HEAP32[r4] = 1;
   }
   if ((HEAP32[r5 + (r3 << 2) >> 2] & r7 | 0) == 0) {
-    r8 = 0;
+    r9 = 0;
     STACKTOP = r2;
-    return r8;
+    return r9;
   }
   HEAP32[r4] = HEAP32[r4] | 2;
-  r8 = 0;
+  r9 = 0;
   STACKTOP = r2;
-  return r8;
+  return r9;
 }
 function _malloc(r1) {
   var r2, r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14, r15, r16, r17, r18;
@@ -16350,7 +16426,7 @@ function _tmalloc_small(r1) {
   }
   r8 = HEAP32[r5 + 6];
   r3 = HEAP32[r5 + 3];
-  L1877 : do {
+  L1878 : do {
     if ((r3 | 0) == (r7 | 0)) {
       r10 = r7 + 20 | 0;
       r11 = HEAP32[r10 >> 2];
@@ -16360,7 +16436,7 @@ function _tmalloc_small(r1) {
           r13 = HEAP32[r12 >> 2];
           if ((r13 | 0) == 0) {
             r14 = 0, r15 = r14 >> 2;
-            break L1877;
+            break L1878;
           } else {
             r16 = r13;
             r17 = r12;
@@ -16413,7 +16489,7 @@ function _tmalloc_small(r1) {
       }
     }
   } while (0);
-  L1901 : do {
+  L1902 : do {
     if ((r8 | 0) != 0) {
       r3 = r7 + 28 | 0;
       r6 = (HEAP32[r3 >> 2] << 2) + 411720 | 0;
@@ -16424,7 +16500,7 @@ function _tmalloc_small(r1) {
             break;
           }
           HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r3 >> 2] ^ -1);
-          break L1901;
+          break L1902;
         } else {
           if (r8 >>> 0 < HEAP32[102858] >>> 0) {
             _abort();
@@ -16436,7 +16512,7 @@ function _tmalloc_small(r1) {
             HEAP32[r8 + 20 >> 2] = r14;
           }
           if ((r14 | 0) == 0) {
-            break L1901;
+            break L1902;
           }
         }
       } while (0);
@@ -16537,7 +16613,7 @@ function _tmalloc_large(r1) {
     }
   } while (0);
   r5 = HEAP32[(r6 << 2) + 411720 >> 2];
-  L1947 : do {
+  L1948 : do {
     if ((r5 | 0) == 0) {
       r12 = 0;
       r13 = r4;
@@ -16561,7 +16637,7 @@ function _tmalloc_large(r1) {
             r12 = r10;
             r13 = r18;
             r14 = r10;
-            break L1947;
+            break L1948;
           } else {
             r19 = r10;
             r20 = r18;
@@ -16577,7 +16653,7 @@ function _tmalloc_large(r1) {
           r12 = r19;
           r13 = r20;
           r14 = r21;
-          break L1947;
+          break L1948;
         } else {
           r11 = r19;
           r8 = r20;
@@ -16611,7 +16687,7 @@ function _tmalloc_large(r1) {
       r22 = r14;
     }
   } while (0);
-  L1962 : do {
+  L1963 : do {
     if ((r22 | 0) == 0) {
       r23 = r13;
       r24 = r12, r25 = r24 >> 2;
@@ -16635,7 +16711,7 @@ function _tmalloc_large(r1) {
         if ((r15 | 0) == 0) {
           r23 = r19;
           r24 = r5, r25 = r24 >> 2;
-          break L1962;
+          break L1963;
         } else {
           r14 = r15, r6 = r14 >> 2;
           r4 = r19;
@@ -16664,7 +16740,7 @@ function _tmalloc_large(r1) {
   }
   r14 = HEAP32[r25 + 6];
   r6 = HEAP32[r25 + 3];
-  L1979 : do {
+  L1980 : do {
     if ((r6 | 0) == (r24 | 0)) {
       r5 = r24 + 20 | 0;
       r19 = HEAP32[r5 >> 2];
@@ -16674,7 +16750,7 @@ function _tmalloc_large(r1) {
           r20 = HEAP32[r15 >> 2];
           if ((r20 | 0) == 0) {
             r27 = 0, r28 = r27 >> 2;
-            break L1979;
+            break L1980;
           } else {
             r29 = r20;
             r30 = r15;
@@ -16727,7 +16803,7 @@ function _tmalloc_large(r1) {
       }
     }
   } while (0);
-  L2003 : do {
+  L2004 : do {
     if ((r14 | 0) != 0) {
       r6 = r24 + 28 | 0;
       r22 = (HEAP32[r6 >> 2] << 2) + 411720 | 0;
@@ -16738,7 +16814,7 @@ function _tmalloc_large(r1) {
             break;
           }
           HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r6 >> 2] ^ -1);
-          break L2003;
+          break L2004;
         } else {
           if (r14 >>> 0 < HEAP32[102858] >>> 0) {
             _abort();
@@ -16750,7 +16826,7 @@ function _tmalloc_large(r1) {
             HEAP32[r14 + 20 >> 2] = r27;
           }
           if ((r27 | 0) == 0) {
-            break L2003;
+            break L2004;
           }
         }
       } while (0);
@@ -16865,14 +16941,14 @@ function _tmalloc_large(r1) {
         r35 = (r27 >>> 31 << 2) + r14 + 16 | 0;
         r6 = HEAP32[r35 >> 2];
         if ((r6 | 0) == 0) {
-          r3 = 1573;
+          r3 = 1574;
           break;
         } else {
           r27 = r27 << 1;
           r14 = r6;
         }
       }
-      if (r3 == 1573) {
+      if (r3 == 1574) {
         if (r35 >>> 0 < HEAP32[102858] >>> 0) {
           _abort();
         } else {
@@ -16930,16 +17006,16 @@ function _sys_alloc(r1) {
       return r6;
     }
   } while (0);
-  L2080 : do {
+  L2081 : do {
     if ((HEAP32[102965] & 4 | 0) == 0) {
       r4 = HEAP32[102860];
       do {
         if ((r4 | 0) == 0) {
-          r2 = 1601;
+          r2 = 1602;
         } else {
           r8 = _segment_holding(r4);
           if ((r8 | 0) == 0) {
-            r2 = 1601;
+            r2 = 1602;
             break;
           }
           r7 = HEAP32[102457];
@@ -16954,12 +17030,12 @@ function _sys_alloc(r1) {
           r13 = r11 ? r9 : 0;
           r14 = r7;
           r15 = r9;
-          r2 = 1610;
+          r2 = 1611;
           break;
         }
       } while (0);
       do {
-        if (r2 == 1601) {
+        if (r2 == 1602) {
           r4 = _sbrk(0);
           if ((r4 | 0) == -1) {
             r10 = 0;
@@ -16992,18 +17068,18 @@ function _sys_alloc(r1) {
           r13 = r9 ? r16 : 0;
           r14 = r11;
           r15 = r16;
-          r2 = 1610;
+          r2 = 1611;
           break;
         }
       } while (0);
-      L2096 : do {
-        if (r2 == 1610) {
+      L2097 : do {
+        if (r2 == 1611) {
           r11 = -r15 | 0;
           if ((r12 | 0) != -1) {
             r17 = r13;
             r18 = r12;
-            r2 = 1621;
-            break L2080;
+            r2 = 1622;
+            break L2081;
           }
           do {
             if ((r14 | 0) != -1 & r15 >>> 0 < 2147483647 & r15 >>> 0 < r3 >>> 0) {
@@ -17016,7 +17092,7 @@ function _sys_alloc(r1) {
               if ((_sbrk(r4) | 0) == -1) {
                 _sbrk(r11);
                 r10 = r13;
-                break L2096;
+                break L2097;
               } else {
                 r19 = r4 + r15 | 0;
                 break;
@@ -17030,22 +17106,22 @@ function _sys_alloc(r1) {
           } else {
             r17 = r19;
             r18 = r14;
-            r2 = 1621;
-            break L2080;
+            r2 = 1622;
+            break L2081;
           }
         }
       } while (0);
       HEAP32[102965] = HEAP32[102965] | 4;
       r20 = r10;
-      r2 = 1618;
+      r2 = 1619;
       break;
     } else {
       r20 = 0;
-      r2 = 1618;
+      r2 = 1619;
     }
   } while (0);
   do {
-    if (r2 == 1618) {
+    if (r2 == 1619) {
       if (r5 >>> 0 >= 2147483647) {
         break;
       }
@@ -17062,19 +17138,19 @@ function _sys_alloc(r1) {
       } else {
         r17 = r14 ? r19 : r20;
         r18 = r13;
-        r2 = 1621;
+        r2 = 1622;
         break;
       }
     }
   } while (0);
   do {
-    if (r2 == 1621) {
+    if (r2 == 1622) {
       r20 = HEAP32[102962] + r17 | 0;
       HEAP32[102962] = r20;
       if (r20 >>> 0 > HEAP32[102963] >>> 0) {
         HEAP32[102963] = r20;
       }
-      L2116 : do {
+      L2117 : do {
         if ((HEAP32[102860] | 0) == 0) {
           r20 = HEAP32[102858];
           if ((r20 | 0) == 0 | r18 >>> 0 < r20 >>> 0) {
@@ -17095,7 +17171,7 @@ function _sys_alloc(r1) {
             r23 = HEAP32[r22 >> 2];
             r24 = r21 + r23 | 0;
             if ((r18 | 0) == (r24 | 0)) {
-              r2 = 1629;
+              r2 = 1630;
               break;
             }
             r13 = HEAP32[r5 + 2];
@@ -17106,7 +17182,7 @@ function _sys_alloc(r1) {
             }
           }
           do {
-            if (r2 == 1629) {
+            if (r2 == 1630) {
               if ((HEAP32[r5 + 3] & 8 | 0) != 0) {
                 break;
               }
@@ -17116,7 +17192,7 @@ function _sys_alloc(r1) {
               }
               HEAP32[r22 >> 2] = r23 + r17 | 0;
               _init_top(HEAP32[102860], HEAP32[102857] + r17 | 0);
-              break L2116;
+              break L2117;
             }
           } while (0);
           if (r18 >>> 0 < HEAP32[102858] >>> 0) {
@@ -17128,7 +17204,7 @@ function _sys_alloc(r1) {
             r25 = r20 | 0;
             r26 = HEAP32[r25 >> 2];
             if ((r26 | 0) == (r5 | 0)) {
-              r2 = 1637;
+              r2 = 1638;
               break;
             }
             r13 = HEAP32[r20 + 8 >> 2];
@@ -17139,7 +17215,7 @@ function _sys_alloc(r1) {
             }
           }
           do {
-            if (r2 == 1637) {
+            if (r2 == 1638) {
               if ((HEAP32[r20 + 12 >> 2] & 8 | 0) != 0) {
                 break;
               }
@@ -17168,7 +17244,8 @@ function _sys_alloc(r1) {
       return r6;
     }
   } while (0);
-  HEAP32[___errno_location() >> 2] = 12;
+  r1 = ___errno_location();
+  HEAP32[r1 >> 2] = 12;
   r6 = 0;
   return r6;
 }
@@ -17193,7 +17270,7 @@ function _free(r1) {
   r9 = r7 & -8, r10 = r9 >> 2;
   r11 = r1 + (r9 - 8) | 0;
   r12 = r11;
-  L2155 : do {
+  L2156 : do {
     if ((r7 & 1 | 0) == 0) {
       r13 = HEAP32[r4 >> 2];
       if ((r8 | 0) == 0) {
@@ -17261,7 +17338,7 @@ function _free(r1) {
       r24 = r16;
       r19 = HEAP32[r15 + (r2 + 6)];
       r25 = HEAP32[r15 + (r2 + 3)];
-      L2188 : do {
+      L2189 : do {
         if ((r25 | 0) == (r24 | 0)) {
           r26 = r14 + (r1 + 20) | 0;
           r27 = HEAP32[r26 >> 2];
@@ -17271,7 +17348,7 @@ function _free(r1) {
               r29 = HEAP32[r28 >> 2];
               if ((r29 | 0) == 0) {
                 r30 = 0, r31 = r30 >> 2;
-                break L2188;
+                break L2189;
               } else {
                 r32 = r29;
                 r33 = r28;
@@ -17340,7 +17417,7 @@ function _free(r1) {
           HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r25 >> 2] ^ -1);
           r20 = r17, r21 = r20 >> 2;
           r22 = r18;
-          break L2155;
+          break L2156;
         } else {
           if (r19 >>> 0 < HEAP32[102858] >>> 0) {
             _abort();
@@ -17354,7 +17431,7 @@ function _free(r1) {
           if ((r30 | 0) == 0) {
             r20 = r17, r21 = r20 >> 2;
             r22 = r18;
-            break L2155;
+            break L2156;
           }
         }
       } while (0);
@@ -17430,7 +17507,7 @@ function _free(r1) {
       }
       r6 = (r31 & -8) + r22 | 0;
       r32 = r31 >>> 3;
-      L2262 : do {
+      L2263 : do {
         if (r31 >>> 0 < 256) {
           r33 = HEAP32[r2 + r10];
           r34 = HEAP32[((r9 | 4) >> 2) + r2];
@@ -17467,7 +17544,7 @@ function _free(r1) {
           r8 = r11;
           r4 = HEAP32[r10 + (r2 + 4)];
           r7 = HEAP32[((r9 | 4) >> 2) + r2];
-          L2282 : do {
+          L2283 : do {
             if ((r7 | 0) == (r8 | 0)) {
               r24 = r9 + (r1 + 12) | 0;
               r19 = HEAP32[r24 >> 2];
@@ -17477,7 +17554,7 @@ function _free(r1) {
                   r16 = HEAP32[r25 >> 2];
                   if ((r16 | 0) == 0) {
                     r35 = 0, r36 = r35 >> 2;
-                    break L2282;
+                    break L2283;
                   } else {
                     r37 = r16;
                     r38 = r25;
@@ -17542,7 +17619,7 @@ function _free(r1) {
                 break;
               }
               HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r7 >> 2] ^ -1);
-              break L2262;
+              break L2263;
             } else {
               if (r4 >>> 0 < HEAP32[102858] >>> 0) {
                 _abort();
@@ -17554,7 +17631,7 @@ function _free(r1) {
                 HEAP32[r4 + 20 >> 2] = r35;
               }
               if ((r35 | 0) == 0) {
-                break L2262;
+                break L2263;
               }
             }
           } while (0);
@@ -17674,14 +17751,14 @@ function _free(r1) {
         r44 = (r22 >>> 31 << 2) + r30 + 16 | 0;
         r5 = HEAP32[r44 >> 2];
         if ((r5 | 0) == 0) {
-          r3 = 1779;
+          r3 = 1780;
           break;
         } else {
           r22 = r22 << 1;
           r30 = r5;
         }
       }
-      if (r3 == 1779) {
+      if (r3 == 1780) {
         if (r44 >>> 0 < HEAP32[102858] >>> 0) {
           _abort();
         } else {
@@ -17820,48 +17897,50 @@ function _realloc(r1, r2) {
     return r3;
   }
   if (r2 >>> 0 > 4294967231) {
-    HEAP32[___errno_location() >> 2] = 12;
+    r4 = ___errno_location();
+    HEAP32[r4 >> 2] = 12;
     r3 = 0;
     return r3;
+  }
+  if (r2 >>> 0 < 11) {
+    r5 = 16;
+  } else {
+    r5 = r2 + 11 & -8;
+  }
+  r4 = _try_realloc_chunk(r1 - 8 | 0, r5);
+  if ((r4 | 0) != 0) {
+    r3 = r4 + 8 | 0;
+    return r3;
+  }
+  r4 = _malloc(r2);
+  if ((r4 | 0) == 0) {
+    r3 = 0;
+    return r3;
+  }
+  r5 = HEAP32[r1 - 4 >> 2];
+  r6 = (r5 & -8) - ((r5 & 3 | 0) == 0 ? 8 : 4) | 0;
+  _memcpy(r4, r1, r6 >>> 0 < r2 >>> 0 ? r6 : r2);
+  _free(r1);
+  r3 = r4;
+  return r3;
+}
+function _realloc_in_place(r1, r2) {
+  var r3, r4;
+  if ((r1 | 0) == 0) {
+    return 0;
+  }
+  if (r2 >>> 0 > 4294967231) {
+    r3 = ___errno_location();
+    HEAP32[r3 >> 2] = 12;
+    return 0;
   }
   if (r2 >>> 0 < 11) {
     r4 = 16;
   } else {
     r4 = r2 + 11 & -8;
   }
-  r5 = _try_realloc_chunk(r1 - 8 | 0, r4);
-  if ((r5 | 0) != 0) {
-    r3 = r5 + 8 | 0;
-    return r3;
-  }
-  r5 = _malloc(r2);
-  if ((r5 | 0) == 0) {
-    r3 = 0;
-    return r3;
-  }
-  r4 = HEAP32[r1 - 4 >> 2];
-  r6 = (r4 & -8) - ((r4 & 3 | 0) == 0 ? 8 : 4) | 0;
-  _memcpy(r5, r1, r6 >>> 0 < r2 >>> 0 ? r6 : r2);
-  _free(r1);
-  r3 = r5;
-  return r3;
-}
-function _realloc_in_place(r1, r2) {
-  var r3;
-  if ((r1 | 0) == 0) {
-    return 0;
-  }
-  if (r2 >>> 0 > 4294967231) {
-    HEAP32[___errno_location() >> 2] = 12;
-    return 0;
-  }
-  if (r2 >>> 0 < 11) {
-    r3 = 16;
-  } else {
-    r3 = r2 + 11 & -8;
-  }
   r2 = r1 - 8 | 0;
-  return (_try_realloc_chunk(r2, r3) | 0) == (r2 | 0) ? r1 : 0;
+  return (_try_realloc_chunk(r2, r4) | 0) == (r2 | 0) ? r1 : 0;
 }
 function _memalign(r1, r2) {
   var r3;
@@ -17876,7 +17955,7 @@ function _memalign(r1, r2) {
 function _internal_memalign(r1, r2) {
   var r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14;
   r3 = r1 >>> 0 < 16 ? 16 : r1;
-  L2451 : do {
+  L2452 : do {
     if ((r3 - 1 & r3 | 0) == 0) {
       r4 = r3;
     } else {
@@ -17886,13 +17965,14 @@ function _internal_memalign(r1, r2) {
           r1 = r1 << 1;
         } else {
           r4 = r1;
-          break L2451;
+          break L2452;
         }
       }
     }
   } while (0);
   if ((-64 - r4 | 0) >>> 0 <= r2 >>> 0) {
-    HEAP32[___errno_location() >> 2] = 12;
+    r3 = ___errno_location();
+    HEAP32[r3 >> 2] = 12;
     r5 = 0;
     return r5;
   }
@@ -18093,7 +18173,7 @@ function _try_realloc_chunk(r1, r2) {
   }
   r18 = r17 - r2 | 0;
   r4 = r14 >>> 3;
-  L2546 : do {
+  L2547 : do {
     if (r14 >>> 0 < 256) {
       r13 = HEAP32[r6 + (r8 + 2)];
       r12 = HEAP32[r6 + (r8 + 3)];
@@ -18130,7 +18210,7 @@ function _try_realloc_chunk(r1, r2) {
       r16 = r9;
       r19 = HEAP32[r6 + (r8 + 6)];
       r20 = HEAP32[r6 + (r8 + 3)];
-      L2548 : do {
+      L2549 : do {
         if ((r20 | 0) == (r16 | 0)) {
           r21 = r5 + (r7 + 20) | 0;
           r22 = HEAP32[r21 >> 2];
@@ -18140,7 +18220,7 @@ function _try_realloc_chunk(r1, r2) {
               r24 = HEAP32[r23 >> 2];
               if ((r24 | 0) == 0) {
                 r25 = 0, r26 = r25 >> 2;
-                break L2548;
+                break L2549;
               } else {
                 r27 = r24;
                 r28 = r23;
@@ -18205,7 +18285,7 @@ function _try_realloc_chunk(r1, r2) {
             break;
           }
           HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r20 >> 2] ^ -1);
-          break L2546;
+          break L2547;
         } else {
           if (r19 >>> 0 < HEAP32[102858] >>> 0) {
             _abort();
@@ -18217,7 +18297,7 @@ function _try_realloc_chunk(r1, r2) {
             HEAP32[r19 + 20 >> 2] = r25;
           }
           if ((r25 | 0) == 0) {
-            break L2546;
+            break L2547;
           }
         }
       } while (0);
@@ -18354,7 +18434,7 @@ function _ialloc(r1, r2, r3, r4) {
       return r6;
     }
   } while (0);
-  L2656 : do {
+  L2657 : do {
     if ((r3 & 1 | 0) == 0) {
       if ((r1 | 0) == 0) {
         r10 = 0;
@@ -18376,7 +18456,7 @@ function _ialloc(r1, r2, r3, r4) {
         if ((r5 | 0) == (r1 | 0)) {
           r10 = 0;
           r11 = r4;
-          break L2656;
+          break L2657;
         } else {
           r12 = r4;
           r13 = r5;
@@ -18413,7 +18493,7 @@ function _ialloc(r1, r2, r3, r4) {
   }
   HEAP32[r16 >> 2] = r15;
   r15 = r1 - 1 | 0;
-  L2677 : do {
+  L2678 : do {
     if ((r15 | 0) == 0) {
       r18 = r13;
       r19 = r17;
@@ -18443,7 +18523,7 @@ function _ialloc(r1, r2, r3, r4) {
         if ((r14 | 0) == (r15 | 0)) {
           r18 = r3;
           r19 = r9;
-          break L2677;
+          break L2678;
         } else {
           r12 = r3;
           r8 = r9;
@@ -18505,7 +18585,7 @@ function _internal_mallinfo(r1) {
       }
       r17 = r16 + r18 | 0;
       r16 = HEAP32[r15];
-      L2705 : do {
+      L2706 : do {
         if (r17 >>> 0 < r16 >>> 0) {
           r19 = r12;
           r20 = r13;
@@ -18522,7 +18602,7 @@ function _internal_mallinfo(r1) {
               r19 = r23;
               r20 = r24;
               r21 = r25;
-              break L2705;
+              break L2706;
             }
             r28 = r26 + 4 | 0;
             r29 = HEAP32[r28 >> 2];
@@ -18530,7 +18610,7 @@ function _internal_mallinfo(r1) {
               r19 = r23;
               r20 = r24;
               r21 = r25;
-              break L2705;
+              break L2706;
             }
             r30 = r29 & -8;
             r31 = r30 + r25 | 0;
@@ -18547,7 +18627,7 @@ function _internal_mallinfo(r1) {
               r19 = r33;
               r20 = r32;
               r21 = r31;
-              break L2705;
+              break L2706;
             } else {
               r23 = r33;
               r24 = r32;
@@ -18600,7 +18680,7 @@ function _internal_malloc_stats() {
   if ((HEAP32[102455] | 0) == 0) {
     _init_mparams();
   }
-  L2722 : do {
+  L2723 : do {
     if ((HEAP32[102860] | 0) == 0) {
       r2 = 0;
       r3 = 0;
@@ -18622,7 +18702,7 @@ function _internal_malloc_stats() {
         }
         r12 = r11 + r13 | 0;
         r11 = HEAP32[r10];
-        L2729 : do {
+        L2730 : do {
           if (r12 >>> 0 < r11 >>> 0) {
             r14 = r8;
           } else {
@@ -18633,13 +18713,13 @@ function _internal_malloc_stats() {
             while (1) {
               if (r17 >>> 0 >= (r18 + r15 | 0) >>> 0 | (r17 | 0) == (r7 | 0)) {
                 r14 = r16;
-                break L2729;
+                break L2730;
               }
               r19 = r17 + 4 | 0;
               r20 = HEAP32[r19 >> 2];
               if ((r20 | 0) == 7) {
                 r14 = r16;
-                break L2729;
+                break L2730;
               }
               if ((r20 & 3 | 0) == 1) {
                 r21 = r16 - (r20 & -8) | 0;
@@ -18650,7 +18730,7 @@ function _internal_malloc_stats() {
               r19 = HEAP32[r10];
               if (r20 >>> 0 < r19 >>> 0) {
                 r14 = r21;
-                break L2729;
+                break L2730;
               } else {
                 r16 = r21;
                 r17 = r20;
@@ -18664,7 +18744,7 @@ function _internal_malloc_stats() {
           r2 = r14;
           r3 = r6;
           r4 = r5;
-          break L2722;
+          break L2723;
         } else {
           r8 = r14;
           r9 = r10;
@@ -18725,19 +18805,20 @@ function _init_mparams() {
   HEAP32[102459] = 2097152;
   HEAP32[102460] = 0;
   HEAP32[102965] = 0;
-  HEAP32[102455] = _time(0) & -16 ^ 1431655768;
+  r1 = _time(0) & -16 ^ 1431655768;
+  HEAP32[102455] = r1;
   return;
 }
 function _internal_bulk_free(r1, r2) {
   var r3, r4, r5, r6, r7, r8, r9, r10, r11, r12, r13, r14;
   r3 = 0;
   r4 = (r2 << 2) + r1 | 0;
-  L2761 : do {
+  L2762 : do {
     if ((r2 | 0) != 0) {
       r5 = r1;
-      L2762 : while (1) {
+      L2763 : while (1) {
         r6 = HEAP32[r5 >> 2];
-        L2764 : do {
+        L2765 : do {
           if ((r6 | 0) != 0) {
             r7 = r6 - 8 | 0;
             r8 = r7;
@@ -18745,13 +18826,13 @@ function _internal_bulk_free(r1, r2) {
             r10 = HEAP32[r9] & -8;
             HEAP32[r5 >> 2] = 0;
             if (r7 >>> 0 < HEAP32[102858] >>> 0) {
-              r3 = 2130;
-              break L2762;
+              r3 = 2131;
+              break L2763;
             }
             r7 = HEAP32[r9];
             if ((r7 & 3 | 0) == 1) {
-              r3 = 2131;
-              break L2762;
+              r3 = 2132;
+              break L2763;
             }
             r11 = r5 + 4 | 0;
             r12 = r7 - 8 & -8;
@@ -18765,7 +18846,7 @@ function _internal_bulk_free(r1, r2) {
                 r14 = r6 + (r13 - 4) | 0;
                 HEAP32[r14 >> 2] = HEAP32[r14 >> 2] | 1;
                 HEAP32[r11 >> 2] = r6;
-                break L2764;
+                break L2765;
               }
             } while (0);
             _dispose_chunk(r8, r10);
@@ -18773,14 +18854,14 @@ function _internal_bulk_free(r1, r2) {
         } while (0);
         r6 = r5 + 4 | 0;
         if ((r6 | 0) == (r4 | 0)) {
-          break L2761;
+          break L2762;
         } else {
           r5 = r6;
         }
       }
-      if (r3 == 2130) {
+      if (r3 == 2131) {
         _abort();
-      } else if (r3 == 2131) {
+      } else if (r3 == 2132) {
         _abort();
       }
     }
@@ -18820,22 +18901,22 @@ function _segment_holding(r1) {
     if (r5 >>> 0 <= r1 >>> 0) {
       if ((r5 + HEAP32[r4 + 1] | 0) >>> 0 > r1 >>> 0) {
         r6 = r3;
-        r2 = 2148;
+        r2 = 2149;
         break;
       }
     }
     r5 = HEAP32[r4 + 2];
     if ((r5 | 0) == 0) {
       r6 = 0;
-      r2 = 2147;
+      r2 = 2148;
       break;
     } else {
       r3 = r5, r4 = r3 >> 2;
     }
   }
-  if (r2 == 2147) {
+  if (r2 == 2148) {
     return r6;
-  } else if (r2 == 2148) {
+  } else if (r2 == 2149) {
     return r6;
   }
 }
@@ -18847,7 +18928,7 @@ function _dispose_chunk(r1, r2) {
   r7 = r5 + r2 | 0;
   r8 = r7;
   r9 = HEAP32[r1 + 4 >> 2];
-  L2800 : do {
+  L2801 : do {
     if ((r9 & 1 | 0) == 0) {
       r10 = HEAP32[r1 >> 2];
       if ((r9 & 3 | 0) == 0) {
@@ -18915,7 +18996,7 @@ function _dispose_chunk(r1, r2) {
       r21 = r11;
       r15 = HEAP32[(24 - r10 >> 2) + r6];
       r22 = HEAP32[(12 - r10 >> 2) + r6];
-      L2833 : do {
+      L2834 : do {
         if ((r22 | 0) == (r21 | 0)) {
           r23 = 16 - r10 | 0;
           r24 = r23 + (r5 + 4) | 0;
@@ -18926,7 +19007,7 @@ function _dispose_chunk(r1, r2) {
               r27 = HEAP32[r26 >> 2];
               if ((r27 | 0) == 0) {
                 r28 = 0, r29 = r28 >> 2;
-                break L2833;
+                break L2834;
               } else {
                 r30 = r27;
                 r31 = r26;
@@ -18995,7 +19076,7 @@ function _dispose_chunk(r1, r2) {
           HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r22 >> 2] ^ -1);
           r16 = r12, r17 = r16 >> 2;
           r18 = r13;
-          break L2800;
+          break L2801;
         } else {
           if (r15 >>> 0 < HEAP32[102858] >>> 0) {
             _abort();
@@ -19009,7 +19090,7 @@ function _dispose_chunk(r1, r2) {
           if ((r28 | 0) == 0) {
             r16 = r12, r17 = r16 >> 2;
             r18 = r13;
-            break L2800;
+            break L2801;
           }
         }
       } while (0);
@@ -19080,7 +19161,7 @@ function _dispose_chunk(r1, r2) {
       }
       r30 = (r29 & -8) + r18 | 0;
       r31 = r29 >>> 3;
-      L2900 : do {
+      L2901 : do {
         if (r29 >>> 0 < 256) {
           r32 = HEAP32[r3 + (r6 + 2)];
           r9 = HEAP32[r3 + (r6 + 3)];
@@ -19117,7 +19198,7 @@ function _dispose_chunk(r1, r2) {
           r22 = r7;
           r10 = HEAP32[r3 + (r6 + 6)];
           r15 = HEAP32[r3 + (r6 + 3)];
-          L2902 : do {
+          L2903 : do {
             if ((r15 | 0) == (r22 | 0)) {
               r14 = r2 + (r5 + 20) | 0;
               r11 = HEAP32[r14 >> 2];
@@ -19127,7 +19208,7 @@ function _dispose_chunk(r1, r2) {
                   r20 = HEAP32[r19 >> 2];
                   if ((r20 | 0) == 0) {
                     r33 = 0, r34 = r33 >> 2;
-                    break L2902;
+                    break L2903;
                   } else {
                     r35 = r20;
                     r36 = r19;
@@ -19192,7 +19273,7 @@ function _dispose_chunk(r1, r2) {
                 break;
               }
               HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r15 >> 2] ^ -1);
-              break L2900;
+              break L2901;
             } else {
               if (r10 >>> 0 < HEAP32[102858] >>> 0) {
                 _abort();
@@ -19204,7 +19285,7 @@ function _dispose_chunk(r1, r2) {
                 HEAP32[r10 + 20 >> 2] = r33;
               }
               if ((r33 | 0) == 0) {
-                break L2900;
+                break L2901;
               }
             }
           } while (0);
@@ -19324,14 +19405,14 @@ function _dispose_chunk(r1, r2) {
     r42 = (r40 >>> 31 << 2) + r41 + 16 | 0;
     r39 = HEAP32[r42 >> 2];
     if ((r39 | 0) == 0) {
-      r4 = 2274;
+      r4 = 2275;
       break;
     } else {
       r40 = r40 << 1;
       r41 = r39;
     }
   }
-  if (r4 == 2274) {
+  if (r4 == 2275) {
     if (r42 >>> 0 < HEAP32[102858] >>> 0) {
       _abort();
     }
@@ -19439,7 +19520,7 @@ function _prepend_alloc(r1, r2, r3) {
   if ((r3 & 3 | 0) == 1) {
     r18 = r3 & -8;
     r19 = r3 >>> 3;
-    L3038 : do {
+    L3039 : do {
       if (r3 >>> 0 < 256) {
         r20 = HEAP32[((r9 | 8) >> 2) + r4];
         r21 = HEAP32[r10 + (r4 + 3)];
@@ -19476,7 +19557,7 @@ function _prepend_alloc(r1, r2, r3) {
         r22 = r7;
         r23 = HEAP32[((r9 | 24) >> 2) + r4];
         r24 = HEAP32[r10 + (r4 + 3)];
-        L3058 : do {
+        L3059 : do {
           if ((r24 | 0) == (r22 | 0)) {
             r25 = r9 | 16;
             r26 = r25 + (r2 + 4) | 0;
@@ -19487,7 +19568,7 @@ function _prepend_alloc(r1, r2, r3) {
                 r29 = HEAP32[r28 >> 2];
                 if ((r29 | 0) == 0) {
                   r30 = 0, r31 = r30 >> 2;
-                  break L3058;
+                  break L3059;
                 } else {
                   r32 = r29;
                   r33 = r28;
@@ -19552,7 +19633,7 @@ function _prepend_alloc(r1, r2, r3) {
               break;
             }
             HEAP32[102855] = HEAP32[102855] & (1 << HEAP32[r24 >> 2] ^ -1);
-            break L3038;
+            break L3039;
           } else {
             if (r23 >>> 0 < HEAP32[102858] >>> 0) {
               _abort();
@@ -19564,7 +19645,7 @@ function _prepend_alloc(r1, r2, r3) {
               HEAP32[r23 + 20 >> 2] = r30;
             }
             if ((r30 | 0) == 0) {
-              break L3038;
+              break L3039;
             }
           }
         } while (0);
@@ -19684,14 +19765,14 @@ function _prepend_alloc(r1, r2, r3) {
     r40 = (r38 >>> 31 << 2) + r39 + 16 | 0;
     r14 = HEAP32[r40 >> 2];
     if ((r14 | 0) == 0) {
-      r6 = 2388;
+      r6 = 2389;
       break;
     } else {
       r38 = r38 << 1;
       r39 = r14;
     }
   }
-  if (r6 == 2388) {
+  if (r6 == 2389) {
     if (r40 >>> 0 < HEAP32[102858] >>> 0) {
       _abort();
     }
@@ -19751,7 +19832,7 @@ function _add_segment(r1, r2) {
   HEAP32[102968] = r10;
   r10 = r11 + 28 | 0;
   HEAP32[r10 >> 2] = 7;
-  L3151 : do {
+  L3152 : do {
     if ((r11 + 32 | 0) >>> 0 < r7 >>> 0) {
       r2 = r10;
       while (1) {
@@ -19760,7 +19841,7 @@ function _add_segment(r1, r2) {
         if ((r2 + 8 | 0) >>> 0 < r7 >>> 0) {
           r2 = r1;
         } else {
-          break L3151;
+          break L3152;
         }
       }
     }
@@ -19845,14 +19926,14 @@ function _add_segment(r1, r2) {
     r15 = (r13 >>> 31 << 2) + r14 + 16 | 0;
     r12 = HEAP32[r15 >> 2];
     if ((r12 | 0) == 0) {
-      r3 = 2432;
+      r3 = 2433;
       break;
     } else {
       r13 = r13 << 1;
       r14 = r12;
     }
   }
-  if (r3 == 2432) {
+  if (r3 == 2433) {
     if (r15 >>> 0 < HEAP32[102858] >>> 0) {
       _abort();
     }
@@ -19949,7 +20030,8 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
     HEAP32[102440] = 1;
   }
   if ((HEAP32[102478] | 0) == -1 | (HEAP32[102438] | 0) != 0) {
-    HEAP32[102478] = (_getenv(411120) | 0) != 0 & 1;
+    r11 = (_getenv(411120) | 0) != 0 & 1;
+    HEAP32[102478] = r11;
   }
   r11 = HEAP8[r3];
   if (r11 << 24 >> 24 == 45) {
@@ -19966,53 +20048,53 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
   HEAP32[102442] = 0;
   do {
     if ((HEAP32[102438] | 0) == 0) {
-      r8 = 2478;
+      r8 = 2479;
     } else {
       HEAP32[102444] = -1;
       HEAP32[102443] = -1;
-      r8 = 2477;
+      r8 = 2478;
       break;
     }
   } while (0);
   while (1) {
-    if (r8 == 2478) {
+    if (r8 == 2479) {
       r8 = 0;
-      if (HEAP8[HEAP32[102437]] << 24 >> 24 != 0) {
+      if ((HEAP8[HEAP32[102437]] | 0) != 0) {
         break;
       }
-    } else if (r8 == 2477) {
+    } else if (r8 == 2478) {
       r8 = 0;
       if ((HEAP32[102438] | 0) == 0) {
-        r8 = 2478;
+        r8 = 2479;
         continue;
       }
     }
     HEAP32[102438] = 0;
     r3 = HEAP32[102440];
     if ((r3 | 0) >= (r1 | 0)) {
-      r8 = 2480;
+      r8 = 2481;
       break;
     }
     r6 = HEAP32[(r3 << 2 >> 2) + r7];
     HEAP32[102437] = r6;
-    if (HEAP8[r6] << 24 >> 24 == 45) {
-      if (HEAP8[r6 + 1 | 0] << 24 >> 24 != 0) {
-        r8 = 2496;
+    if ((HEAP8[r6] | 0) == 45) {
+      if ((HEAP8[r6 + 1 | 0] | 0) != 0) {
+        r8 = 2497;
         break;
       }
       if ((_strchr(r13, 45) | 0) != 0) {
-        r8 = 2496;
+        r8 = 2497;
         break;
       }
     }
     HEAP32[102437] = 411268;
     if ((r12 & 2 | 0) != 0) {
-      r8 = 2489;
+      r8 = 2490;
       break;
     }
     if ((r12 & 1 | 0) == 0) {
       r10 = -1;
-      r8 = 2557;
+      r8 = 2558;
       break;
     }
     r6 = HEAP32[102443];
@@ -20030,24 +20112,24 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       }
     } while (0);
     HEAP32[102440] = HEAP32[102440] + 1 | 0;
-    r8 = 2477;
+    r8 = 2478;
     continue;
   }
   do {
-    if (r8 == 2496) {
+    if (r8 == 2497) {
       if ((HEAP32[102443] | 0) != -1 & (HEAP32[102444] | 0) == -1) {
         HEAP32[102444] = HEAP32[102440];
       }
       r6 = HEAP32[102437];
       r3 = r6 + 1 | 0;
-      if (HEAP8[r3] << 24 >> 24 == 0) {
+      if ((HEAP8[r3] | 0) == 0) {
         break;
       }
       HEAP32[102437] = r3;
-      if (HEAP8[r3] << 24 >> 24 != 45) {
+      if ((HEAP8[r3] | 0) != 45) {
         break;
       }
-      if (HEAP8[r6 + 2 | 0] << 24 >> 24 != 0) {
+      if ((HEAP8[r6 + 2 | 0] | 0) != 0) {
         break;
       }
       HEAP32[102440] = HEAP32[102440] + 1 | 0;
@@ -20062,7 +20144,7 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       r10 = -1;
       STACKTOP = r9;
       return r10;
-    } else if (r8 == 2480) {
+    } else if (r8 == 2481) {
       HEAP32[102437] = 411268;
       r6 = HEAP32[102444];
       r3 = HEAP32[102443];
@@ -20082,14 +20164,14 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       r10 = -1;
       STACKTOP = r9;
       return r10;
-    } else if (r8 == 2489) {
+    } else if (r8 == 2490) {
       r6 = HEAP32[102440];
       HEAP32[102440] = r6 + 1 | 0;
       HEAP32[102442] = HEAP32[(r6 << 2 >> 2) + r7];
       r10 = 1;
       STACKTOP = r9;
       return r10;
-    } else if (r8 == 2557) {
+    } else if (r8 == 2558) {
       STACKTOP = r9;
       return r10;
     }
@@ -20101,7 +20183,7 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       if ((r3 | 0) == (HEAP32[(HEAP32[102440] << 2 >> 2) + r7] | 0)) {
         break;
       }
-      if (HEAP8[r3] << 24 >> 24 != 45) {
+      if ((HEAP8[r3] | 0) != 45) {
         if ((r12 & 4 | 0) == 0) {
           break;
         }
@@ -20133,23 +20215,23 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
   r14 = r11 << 24 >> 24;
   do {
     if (r11 << 24 >> 24 == 45) {
-      if (HEAP8[r12] << 24 >> 24 == 0) {
-        r8 = 2515;
+      if ((HEAP8[r12] | 0) == 0) {
+        r8 = 2516;
         break;
       } else {
-        r8 = 2517;
+        r8 = 2518;
         break;
       }
     } else if (r11 << 24 >> 24 != 58) {
-      r8 = 2515;
+      r8 = 2516;
     }
   } while (0);
   do {
-    if (r8 == 2515) {
+    if (r8 == 2516) {
       r12 = _strchr(r13, r14);
       if ((r12 | 0) == 0) {
         if (r11 << 24 >> 24 == 45) {
-          r8 = 2517;
+          r8 = 2518;
           break;
         } else {
           break;
@@ -20157,11 +20239,11 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       }
       do {
         if (r6 & r11 << 24 >> 24 == 87) {
-          if (HEAP8[r12 + 1 | 0] << 24 >> 24 != 59) {
+          if ((HEAP8[r12 + 1 | 0] | 0) != 59) {
             break;
           }
           do {
-            if (HEAP8[HEAP32[102437]] << 24 >> 24 == 0) {
+            if ((HEAP8[HEAP32[102437]] | 0) == 0) {
               r3 = HEAP32[102440] + 1 | 0;
               HEAP32[102440] = r3;
               if ((r3 | 0) < (r1 | 0)) {
@@ -20171,14 +20253,14 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
               HEAP32[102437] = 411268;
               do {
                 if ((HEAP32[102441] | 0) != 0) {
-                  if (HEAP8[r13] << 24 >> 24 == 58) {
+                  if ((HEAP8[r13] | 0) == 58) {
                     break;
                   }
                   __warnx(409640, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r14, tempInt));
                 }
               } while (0);
               HEAP32[102439] = r14;
-              r10 = HEAP8[r13] << 24 >> 24 == 58 ? 58 : 63;
+              r10 = (HEAP8[r13] | 0) == 58 ? 58 : 63;
               STACKTOP = r9;
               return r10;
             }
@@ -20190,8 +20272,8 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
           return r10;
         }
       } while (0);
-      if (HEAP8[r12 + 1 | 0] << 24 >> 24 != 58) {
-        if (HEAP8[HEAP32[102437]] << 24 >> 24 != 0) {
+      if ((HEAP8[r12 + 1 | 0] | 0) != 58) {
+        if ((HEAP8[HEAP32[102437]] | 0) != 0) {
           r10 = r14;
           STACKTOP = r9;
           return r10;
@@ -20204,8 +20286,8 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       HEAP32[102442] = 0;
       r3 = HEAP32[102437];
       do {
-        if (HEAP8[r3] << 24 >> 24 == 0) {
-          if (HEAP8[r12 + 2 | 0] << 24 >> 24 == 58) {
+        if ((HEAP8[r3] | 0) == 0) {
+          if ((HEAP8[r12 + 2 | 0] | 0) == 58) {
             break;
           }
           r15 = HEAP32[102440] + 1 | 0;
@@ -20217,14 +20299,14 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
           HEAP32[102437] = 411268;
           do {
             if ((HEAP32[102441] | 0) != 0) {
-              if (HEAP8[r13] << 24 >> 24 == 58) {
+              if ((HEAP8[r13] | 0) == 58) {
                 break;
               }
               __warnx(409640, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r14, tempInt));
             }
           } while (0);
           HEAP32[102439] = r14;
-          r10 = HEAP8[r13] << 24 >> 24 == 58 ? 58 : 63;
+          r10 = (HEAP8[r13] | 0) == 58 ? 58 : 63;
           STACKTOP = r9;
           return r10;
         } else {
@@ -20239,8 +20321,8 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
     }
   } while (0);
   do {
-    if (r8 == 2517) {
-      if (HEAP8[HEAP32[102437]] << 24 >> 24 == 0) {
+    if (r8 == 2518) {
+      if ((HEAP8[HEAP32[102437]] | 0) == 0) {
         r10 = -1;
       } else {
         break;
@@ -20249,12 +20331,12 @@ function _getopt_internal(r1, r2, r3, r4, r5, r6) {
       return r10;
     }
   } while (0);
-  if (HEAP8[HEAP32[102437]] << 24 >> 24 == 0) {
+  if ((HEAP8[HEAP32[102437]] | 0) == 0) {
     HEAP32[102440] = HEAP32[102440] + 1 | 0;
   }
   do {
     if ((HEAP32[102441] | 0) != 0) {
-      if (HEAP8[r13] << 24 >> 24 == 58) {
+      if ((HEAP8[r13] | 0) == 58) {
         break;
       }
       __warnx(409888, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r14, tempInt));
@@ -20285,7 +20367,7 @@ function _permute_args(r1, r2, r3, r4) {
   r5 = 0;
   while (1) {
     r9 = r5 + r2 | 0;
-    L3349 : do {
+    L3350 : do {
       if (r1) {
         r10 = (r9 << 2) + r4 | 0;
         r11 = 0;
@@ -20298,7 +20380,7 @@ function _permute_args(r1, r2, r3, r4) {
           HEAP32[r10 >> 2] = r15;
           r15 = r11 + 1 | 0;
           if ((r15 | 0) == (r8 | 0)) {
-            break L3349;
+            break L3350;
           } else {
             r11 = r15;
             r12 = r13;
@@ -20322,7 +20404,7 @@ function __Znwj(r1) {
   while (1) {
     r4 = _malloc(r3);
     if ((r4 | 0) != 0) {
-      r2 = 2582;
+      r2 = 2583;
       break;
     }
     r1 = __ZSt15get_new_handlerv();
@@ -20331,7 +20413,7 @@ function __Znwj(r1) {
     }
     FUNCTION_TABLE[r1]();
   }
-  if (r2 == 2582) {
+  if (r2 == 2583) {
     return r4;
   }
   r4 = ___cxa_allocate_exception(4);
@@ -20397,12 +20479,12 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
       r14 = 0;
       r15 = -1;
       r16 = r10;
-      L3384 : while (1) {
+      L3385 : while (1) {
         do {
           if ((_strncmp(r9, r16, r11) | 0) == 0) {
             if ((_strlen(r16) | 0) == (r11 | 0)) {
               r17 = r14;
-              break L3384;
+              break L3385;
             }
             if (r13) {
               r18 = r15;
@@ -20411,8 +20493,8 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
             if ((r15 | 0) == -1) {
               r18 = r14;
             } else {
-              r7 = 2613;
-              break L3384;
+              r7 = 2614;
+              break L3385;
             }
           } else {
             r18 = r15;
@@ -20429,10 +20511,10 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
           r16 = r20;
         }
       }
-      if (r7 == 2613) {
+      if (r7 == 2614) {
         do {
           if ((HEAP32[102441] | 0) != 0) {
-            if (HEAP8[r2] << 24 >> 24 == 58) {
+            if ((HEAP8[r2] | 0) == 58) {
               break;
             }
             __warnx(411084, (tempInt = STACKTOP, STACKTOP = STACKTOP + 8 | 0, HEAP32[tempInt >> 2] = r11, HEAP32[tempInt + 4 >> 2] = r9, tempInt));
@@ -20452,7 +20534,7 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
       if (!((r15 | 0) != 0 | r14)) {
         do {
           if ((HEAP32[102441] | 0) != 0) {
-            if (HEAP8[r2] << 24 >> 24 == 58) {
+            if ((HEAP8[r2] | 0) == 58) {
               break;
             }
             __warnx(409780, (tempInt = STACKTOP, STACKTOP = STACKTOP + 8 | 0, HEAP32[tempInt >> 2] = r11, HEAP32[tempInt + 4 >> 2] = r9, tempInt));
@@ -20464,7 +20546,7 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
           r22 = 0;
         }
         HEAP32[102439] = r22;
-        r21 = HEAP8[r2] << 24 >> 24 == 58 ? 58 : 63;
+        r21 = (HEAP8[r2] | 0) == 58 ? 58 : 63;
         STACKTOP = r8;
         return r21;
       }
@@ -20500,7 +20582,7 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
       }
       do {
         if ((HEAP32[102441] | 0) != 0) {
-          if (HEAP8[r2] << 24 >> 24 == 58) {
+          if ((HEAP8[r2] | 0) == 58) {
             break;
           }
           __warnx(409604, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r9, tempInt));
@@ -20513,7 +20595,7 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
       }
       HEAP32[102439] = r23;
       HEAP32[102440] = HEAP32[102440] - 1 | 0;
-      r21 = HEAP8[r2] << 24 >> 24 == 58 ? 58 : 63;
+      r21 = (HEAP8[r2] | 0) == 58 ? 58 : 63;
       STACKTOP = r8;
       return r21;
     }
@@ -20526,7 +20608,7 @@ function _parse_long_options(r1, r2, r3, r4, r5) {
   }
   do {
     if ((HEAP32[102441] | 0) != 0) {
-      if (HEAP8[r2] << 24 >> 24 == 58) {
+      if ((HEAP8[r2] | 0) == 58) {
         break;
       }
       __warnx(409864, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r9, tempInt));
@@ -20560,15 +20642,16 @@ function __warnx(r1, r2) {
 function __vwarn(r1, r2) {
   var r3, r4, r5;
   r3 = STACKTOP;
-  r4 = HEAP32[___errno_location() >> 2];
-  r5 = HEAP32[___progname >> 2];
-  _fprintf(HEAP32[_stderr >> 2], 411260, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r5, tempInt));
+  r4 = ___errno_location();
+  r5 = HEAP32[r4 >> 2];
+  r4 = HEAP32[___progname >> 2];
+  _fprintf(HEAP32[_stderr >> 2], 411260, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r4, tempInt));
   if ((r1 | 0) != 0) {
     _fprintf(HEAP32[_stderr >> 2], r1, r2);
     _fwrite(411336, 2, 1, HEAP32[_stderr >> 2]);
   }
   r2 = HEAP32[_stderr >> 2];
-  r1 = _strerror(r4);
+  r1 = _strerror(r5);
   _fprintf(r2, 411216, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r1, tempInt));
   STACKTOP = r3;
   return;
@@ -20590,7 +20673,7 @@ function _strtod(r1, r2) {
   r3 = 0;
   r4 = r1;
   while (1) {
-    if ((_isspace(HEAP8[r4] << 24 >> 24) | 0) == 0) {
+    if ((_isspace(HEAP8[r4] | 0) | 0) == 0) {
       break;
     } else {
       r4 = r4 + 1 | 0;
@@ -20664,14 +20747,14 @@ function _strtod(r1, r2) {
           r19 = (r18 | 0) * 1e9;
           r20 = 9;
           r21 = r17;
-          r3 = 2677;
+          r3 = 2678;
           break;
         } else {
           if ((r4 | 0) > 0) {
             r19 = 0;
             r20 = r4;
             r21 = r9;
-            r3 = 2677;
+            r3 = 2678;
             break;
           } else {
             r22 = 0;
@@ -20680,7 +20763,7 @@ function _strtod(r1, r2) {
           }
         }
       } while (0);
-      if (r3 == 2677) {
+      if (r3 == 2678) {
         r5 = r21;
         r11 = r20;
         r10 = 0;
@@ -20709,7 +20792,7 @@ function _strtod(r1, r2) {
       }
       r10 = r23 + r22;
       r11 = HEAP8[r8];
-      L3489 : do {
+      L3490 : do {
         if (r11 << 24 >> 24 == 69 | r11 << 24 >> 24 == 101) {
           r5 = r8 + 1 | 0;
           r6 = HEAP8[r5];
@@ -20723,7 +20806,7 @@ function _strtod(r1, r2) {
             r27 = r5;
             r28 = 0;
           }
-          if (((HEAP8[r27] << 24 >> 24) - 48 | 0) >>> 0 < 10) {
+          if (((HEAP8[r27] | 0) - 48 | 0) >>> 0 < 10) {
             r29 = r27;
             r30 = 0;
           } else {
@@ -20733,16 +20816,16 @@ function _strtod(r1, r2) {
             break;
           }
           while (1) {
-            r5 = (HEAP8[r29] << 24 >> 24) + ((r30 * 10 & -1) - 48) | 0;
+            r5 = (r30 * 10 & -1) - 48 + (HEAP8[r29] | 0) | 0;
             r6 = r29 + 1 | 0;
-            if (((HEAP8[r6] << 24 >> 24) - 48 | 0) >>> 0 < 10) {
+            if (((HEAP8[r6] | 0) - 48 | 0) >>> 0 < 10) {
               r29 = r6;
               r30 = r5;
             } else {
               r31 = r5;
               r32 = r6;
               r33 = r28;
-              break L3489;
+              break L3490;
             }
           }
         } else {
@@ -20755,11 +20838,12 @@ function _strtod(r1, r2) {
       r6 = (r11 | 0) < 0 ? -r11 | 0 : r11;
       do {
         if ((r6 | 0) > 511) {
-          HEAP32[___errno_location() >> 2] = 34;
+          r5 = ___errno_location();
+          HEAP32[r5 >> 2] = 34;
           r34 = 1;
           r35 = 409676;
           r36 = 511;
-          r3 = 2694;
+          r3 = 2695;
           break;
         } else {
           if ((r6 | 0) == 0) {
@@ -20769,13 +20853,13 @@ function _strtod(r1, r2) {
             r34 = 1;
             r35 = 409676;
             r36 = r6;
-            r3 = 2694;
+            r3 = 2695;
             break;
           }
         }
       } while (0);
-      L3501 : do {
-        if (r3 == 2694) {
+      L3502 : do {
+        if (r3 == 2695) {
           while (1) {
             r3 = 0;
             if ((r36 & 1 | 0) == 0) {
@@ -20786,12 +20870,12 @@ function _strtod(r1, r2) {
             r6 = r36 >> 1;
             if ((r6 | 0) == 0) {
               r37 = r38;
-              break L3501;
+              break L3502;
             } else {
               r34 = r38;
               r35 = r35 + 8 | 0;
               r36 = r6;
-              r3 = 2694;
+              r3 = 2695;
             }
           }
         }
@@ -20850,15 +20934,16 @@ function __errx(r1, r2, r3) {
 }
 function __verr(r1, r2, r3) {
   var r4, r5;
-  r4 = HEAP32[___errno_location() >> 2];
-  r5 = HEAP32[___progname >> 2];
-  _fprintf(HEAP32[_stderr >> 2], 411112, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r5, tempInt));
+  r4 = ___errno_location();
+  r5 = HEAP32[r4 >> 2];
+  r4 = HEAP32[___progname >> 2];
+  _fprintf(HEAP32[_stderr >> 2], 411112, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r4, tempInt));
   if ((r2 | 0) != 0) {
     _fprintf(HEAP32[_stderr >> 2], r2, r3);
     _fwrite(411344, 2, 1, HEAP32[_stderr >> 2]);
   }
   r3 = HEAP32[_stderr >> 2];
-  r2 = _strerror(r4);
+  r2 = _strerror(r5);
   _fprintf(r3, 411220, (tempInt = STACKTOP, STACKTOP = STACKTOP + 4 | 0, HEAP32[tempInt >> 2] = r2, tempInt));
   _exit(r1);
 }
@@ -20882,6 +20967,7 @@ Module["_jsapi_address_get_host"] = _jsapi_address_get_host;
 Module["_jsapi_address_get_port"] = _jsapi_address_get_port;
 Module["_jsapi_packet_get_data"] = _jsapi_packet_get_data;
 Module["_jsapi_packet_get_dataLength"] = _jsapi_packet_get_dataLength;
+Module["_jsapi_packet_set_free_callback"] = _jsapi_packet_set_free_callback;
 Module["_jsapi_host_get_receivedAddress"] = _jsapi_host_get_receivedAddress;
 Module["_jsapi_host_get_socket"] = _jsapi_host_get_socket;
 Module["_jsapi_peer_get_address"] = _jsapi_peer_get_address;
@@ -20899,6 +20985,7 @@ Module["_enet_peer_ping"] = _enet_peer_ping;
 Module["_enet_peer_disconnect_now"] = _enet_peer_disconnect_now;
 Module["_enet_peer_disconnect"] = _enet_peer_disconnect;
 Module["_enet_peer_disconnect_later"] = _enet_peer_disconnect_later;
+Module["_enet_host_flush"] = _enet_host_flush;
 Module["_enet_host_service"] = _enet_host_service;
 Module["_calloc"] = _calloc;
 Module["_realloc"] = _realloc;
@@ -21009,11 +21096,14 @@ run();
 // {{POST_RUN_ADDITIONS}}
   // {{MODULE_ADDITIONS}}
 var events, util, Queue, DGRAM;
-var ENET_HOST_SERVICE_INTERVAL = 30;//milli-seconds
 var global_packet_filter;
+var Stream;
+var ENET_HOST_SERVICE_INTERVAL = 30;//milli-seconds
+var ENET_PACKET_FLAG_RELIABLE = 1;
 events = require("events");
 util = require("util");
 DGRAM = require("dgram");
+Stream = require("stream");
 module.exports.init = function( pf_func){
     if(pf_func){
         _jsapi_init(1);
@@ -21027,7 +21117,9 @@ module.exports.Address = ENetAddress;
 module.exports.Packet = ENetPacket;
 module.exports.inet_ip2long=ip2long;
 module.exports.inet_long2ip=long2ip;
-if(events && util ) util.inherits(ENetHost, events.EventEmitter);
+util.inherits(ENetHost, events.EventEmitter);
+util.inherits(ENetPacket, events.EventEmitter);
+util.inherits(ENetPeer, events.EventEmitter);
 module.exports.createServer = function(P){
     if(P) return new ENetHost(P.address,P.peers,P.channels,P.down,P.up,"server");
 }
@@ -21041,13 +21133,18 @@ module.exports.createClient = function(P){
     return client;
 }
 function ENetHost(address,maxpeers,maxchannels,bw_down,bw_up,host_type){
-   if(events){
-      events.EventEmitter.call(this);
-   }else{
-       this._events = {};
-   }
+   events.EventEmitter.call(this);
+   this.setMaxListeners(0);
+   this.connectedPeers = {};
    var self = this;
    var pointer = 0;
+   //ENetHost from pointer
+   if(arguments.length === 1 && (typeof address === 'number') ){
+      pointer = address;
+      self._pointer = pointer;
+      self._event =  new ENetEvent();
+      return self;
+   }
    if(host_type==='client'){
      pointer = ccall('jsapi_enet_host_create_client', 'number', 
 			['number','number','number','number'],
@@ -21062,70 +21159,66 @@ function ENetHost(address,maxpeers,maxchannels,bw_down,bw_up,host_type){
    }
    self._event = new ENetEvent();//allocate memory for events - free it when we destroy the host
    self._pointer = pointer;
-   self._socket_bound = false;
    var socketfd = ccall('jsapi_host_get_socket',"number",['number'],[self._pointer]);
-   var socket = udp_sockets[socketfd]
-   socket.on("listening",function(){
-    socket.setBroadcast(true);
-    self.emit('ready',socket.address().address,socket.address().port);
-   });
-}
-if(!events){
-    ENetHost.prototype.on = function(e,cb){
-        this._events[e] ? this._events[e].push(cb) : this._events[e]=[cb];
-    };
-    ENetHost.prototype.emit = function(){
-        //used internally to fire events
-        //'apply' event handler function  to 'this' channel pass eventname and Object O
-        var self = this;
-        var e = arguments[0];
-        var params = Array.prototype.slice.apply(arguments,[1]);
-        if(this._events && this._events[e]){
-            this._events[e].forEach(function(cb){
-                cb.apply(self,params);
-            });
-        }
-    };
+   var socket = udp_sockets[socketfd];
+   if(socket._bound || socket.__receiving){
+        setTimeout(function(){
+            socket.setBroadcast(true);
+            self.emit('ready',socket.address().address,socket.address().port);
+        },20);
+   }else{
+     socket.on("listening",function(){
+       socket.setBroadcast(true);
+       self.emit('ready',socket.address().address,socket.address().port);
+     });
+   }
 }
 ENetHost.prototype.__service = cwrap('enet_host_service','number',['number','number','number']);
 ENetHost.prototype.service = function(){
    var self = this;
+   var peer;
    if(!self._pointer || !self._event) return;
   try{
-/*  if we didn't yet bind() the socket we get an exception corresponding to a
-    a EINVAL error from  getsockname() syscall when calling .address() 
-	if(!self._socket_bound){
-                //keep checking until the port is non 0
-                if(self.address().port()!=0){
-                    self._socket_bound=true;
-                    self.emit('ready',self.address().address(),self.address().port());
-                }
-         }
-*/
    var err = self.__service(self._pointer,self._event._pointer,0);
    while( err > 0){
 	switch(self._event.type()){
 		case 0:	//none
 			break;
 		case 1: //connect
-			self.emit("connect",
-			  self._event.peer(),
-			  self._event.data()
-			);
+            peer = self.connectedPeers[self._event.peerPtr()];
+            if(peer){
+                //outgoing connection
+                peer.emit("connect");
+    			self.emit("connect",
+                  peer,
+		    	  undefined,
+                  true
+			    );
+            }else{
+                peer = self.connectedPeers[self._event.peerPtr()]=self._event.peer(); 
+                //incoming connection
+    			self.emit("connect",
+                  peer,
+		    	  self._event.data(),
+                  false
+			    );
+            }
 			break;			
 		case 2: //disconnect
-			self.emit("disconnect",
-			  self._event.peer(),
-			  self._event.data()
-			);
+            peer = self.connectedPeers[self._event.peerPtr()];
+            if(peer){
+                peer.emit("disconnect",self._event.data());
+                delete self.connectedPeers[peer._pointer];
+            }
 			break;
 		case 3: //receive
+            peer = self.connectedPeers[self._event.peerPtr()] || self._event.peer();
 			self.emit("message",
-			  self._event.peer(),
+              peer,
 			  self._event.packet(),
-			  self._event.channelID(),
-			  self._event.data()
+			  self._event.channelID()
 			);
+            peer.emit("message",self._event.packet(),self._event.channelID());
 			self._event.packet().destroy();
 			break;
 		case 100: //rawpacket
@@ -21170,10 +21263,35 @@ ENetHost.prototype.send = function(ip, port,buff){
 	var socket = ccall('jsapi_host_get_socket',"number",['number'],[this._pointer]);
 	udp_sockets[socket].send(buff,0,buff.length,port,ip);
 };
-ENetHost.prototype.connect = function(address,channelCount,data){
+ENetHost.prototype.flush = function(){
+	ccall('enet_host_flush',"",['number'],[this._pointer]);
+};
+ENetHost.prototype.connect = function(address,channelCount,data,connectCallback){
+    var self = this;
+    var peer;
 	var ptr=ccall("jsapi_enet_host_connect","number",['number','number','number','number','number'],
 		[this._pointer,address.host(),address.port(),channelCount||5,data||0]);
-	return new ENetPeer(ptr);
+    var succeeded = false;
+    if(ptr){
+        peer = new ENetPeer(ptr);
+        self.connectedPeers[ptr] = peer;
+        if(connectCallback && (typeof connectCallback === 'function')){
+          peer.on("connect",function(){
+            succeeded = true;
+            connectCallback.call(self,undefined,peer);
+          });
+          peer.on("disconnect",function(){
+            if(!succeeded) connectCallback.call(self,new Error("timeout"));
+          });
+        }
+    	return peer;
+    }else{
+        //ptr is NULL - number of peers exceeded
+        if(connectCallback && (typeof connectCallback === 'function')){
+            connectCallback.call(null,new Error("maxpeers"));
+            return undefined;
+        }
+    }
 };
 ENetHost.prototype.start_watcher = function( ms_interval ){
    if(this._io_loop) return;
@@ -21190,9 +21308,9 @@ ENetHost.prototype.stop_watcher = function(){
 ENetHost.prototype.start = ENetHost.prototype.start_watcher;
 ENetHost.prototype.stop = ENetHost.prototype.stop_watcher;
 function ENetPacket(pointer){
+  var self = this;
   if(arguments.length==1 && typeof arguments[0]=='number'){
 	this._pointer = arguments[0];
-	//console.log("Wrapping ENetPacket Pointer", this._pointer);
 	return this;
   }
   if(arguments.length>0 && typeof arguments[0]=='object'){
@@ -21200,13 +21318,20 @@ function ENetPacket(pointer){
 	var buf = arguments[0];
 	var flags = arguments[1] || 0;
 	this._pointer = ccall("enet_packet_create","number",['number','number','number'],[0,buf.length,flags]);
-	//console.log("ENetPacket malloc'ed",this._pointer);
         var begin = ccall("jsapi_packet_get_data","number",["number"],[this._pointer]);
         var end = begin + buf.length;
 	var c=0,i=begin;
 	for(;i<end;i++,c++){
 		HEAPU8[i]=buf.readUInt8(c);
 	}
+    var callback_ptr = FUNCTION_TABLE.length;
+    FUNCTION_TABLE[callback_ptr] = function(packet){
+        self.emit("free");
+        FUNCTION_TABLE[callback_ptr]=null;
+    };
+    FUNCTION_TABLE.push(0,0);
+    ccall("jsapi_packet_set_free_callback","",["number","number"],[this._pointer,callback_ptr]);
+    events.EventEmitter.call(this);
 	return this;
   }
   if(arguments.length>0 && typeof arguments[0]=='string'){
@@ -21225,7 +21350,7 @@ ENetPacket.prototype.dataLength = function(){
 ENetPacket.prototype.destroy = function(){
 	ccall("enet_packet_destroy",'',['number'],[this._pointer]);
 };
-ENetPacket.prototype.FLAG_RELIABLE = 1;
+ENetPacket.prototype.FLAG_RELIABLE = ENET_PACKET_FLAG_RELIABLE;
 function ENetEvent(){
    this._pointer = ccall('jsapi_event_new','number');
 };
@@ -21238,6 +21363,9 @@ ENetEvent.prototype.type = function(){
 ENetEvent.prototype.peer = function(){
    var ptr = ccall('jsapi_event_get_peer','number',['number'],[this._pointer]);
    return new ENetPeer(ptr);
+};
+ENetEvent.prototype.peerPtr = function(){
+   return ccall('jsapi_event_get_peer','number',['number'],[this._pointer]);
 };
 ENetEvent.prototype.packet = function(){
    var ptr = ccall('jsapi_event_get_packet','number',['number'],[this._pointer]);
@@ -21297,11 +21425,21 @@ ENetAddress.prototype.address = function(){
 }
 function ENetPeer(pointer){
   if(pointer) this._pointer = pointer; else throw("ENetPeer null pointer");
+  events.EventEmitter.call(this);
+  this.setMaxListeners(0);
 };
-ENetPeer.prototype.send = function(channel,packet){
+ENetPeer.prototype.send = function(channel,packet,callback){
+    var self = this;
+    if(callback && callback instanceof Function){
+      packet.on("free",function(){
+        if(callback) callback.call(self);
+      });
+    }
 	var ret = ccall('enet_peer_send','number',['number','number','number'],[this._pointer,channel,packet._pointer]);
-	if(ret < 0) throw("enet.Peer send error");
-	//console.log("enet_peer_send return value:",ret);
+	if(ret < 0) {
+            callback = null;
+            throw("enet.Peer send error");
+    }
 };
 ENetPeer.prototype.receive = function(){
 };
@@ -21324,10 +21462,74 @@ ENetPeer.prototype.address = function(){
  var ptr = ccall('jsapi_peer_get_address','number',['number'],[this._pointer]);
  return new ENetAddress(ptr);
 };
-function __packet_filter (host_ptr){
-   var ip,port,data;
-   return global_packet_filter(ip,port,data);
-}
+//turn a channel with peer into a node writeable Stream
+// ref: https://github.com/substack/stream-handbook
+ENetHost.prototype.createWriteStream = function(peer,channel){
+    var s = new Stream();
+    var totalPacketSizes = 0;
+    s.readable = false;
+    s.writeable = true;
+    var host = this;
+    peer.on("disconnect",function(data){
+            if(s.writeable) s.destroy();
+            s.emit("end");
+    });
+    s.write = function(buf){
+        if(!buf.length) return;
+        if(!s.writeable) return;
+        var packet;
+        try{
+           packet = new ENetPacket(buf,ENET_PACKET_FLAG_RELIABLE);
+           peer.send(channel, packet);
+        }catch(e){
+          s.destroy();//connection lost with peer
+          return;
+        }
+        //dont allocate more than 256KByes of dynamic memory for outgoing packets
+        totalPacketSizes += buf.length;
+        packet.on("free",function(){//packets deallocated from memory (packet was sent)
+            totalPacketSizes -= buf.length;
+            if(totalPacketSizes < (262144)){
+                s.emit("drain");//resume the stream 
+            }
+        });
+        if(totalPacketSizes > (262144) ) return false;//pause stream that is piping into us
+    };
+    s.end = function(buf){
+        if(arguments.length) s.write(buf);
+        s.destroy();
+    };
+    s.destroy = function(){
+        s.writeable = false;
+    };
+    return s;
+};
+ENetHost.prototype.createReadStream = function(peer,channel){
+    var s = new Stream();
+    s.readable = true;
+    s.writeable = false;
+    var paused = false;
+    var host = this;
+    peer.on("disconnect",function(data){
+            s.readable = false;
+            s.emit("end");
+    });
+    peer.on("message",function(_packet,_channel){
+        if(channel === _channel ){
+            if(!paused) s.emit("data",_packet.data());
+                //else ... queue incoming packets
+        }
+    });
+    //todo - proper backpressure implementation
+    s.pause = function(){
+        //paused = true;
+    }
+    s.resume = function(){
+        //de-queue packets
+        //paused = false;
+    }
+    return s;
+};
 /*
     Queue.js - Created by Stephen Morley 
     http://code.stephenmorley.org/ - released under the terms of
@@ -23208,6 +23410,128 @@ exports.writeIEEE754 = function(buffer, value, offset, isBE, mLen, nBytes) {
 
 });
 
+require.define("stream",function(require,module,exports,__dirname,__filename,process,global){var events = require('events');
+var util = require('util');
+
+function Stream() {
+  events.EventEmitter.call(this);
+}
+util.inherits(Stream, events.EventEmitter);
+module.exports = Stream;
+// Backwards-compat with node 0.4.x
+Stream.Stream = Stream;
+
+Stream.prototype.pipe = function(dest, options) {
+  var source = this;
+
+  function ondata(chunk) {
+    if (dest.writable) {
+      if (false === dest.write(chunk) && source.pause) {
+        source.pause();
+      }
+    }
+  }
+
+  source.on('data', ondata);
+
+  function ondrain() {
+    if (source.readable && source.resume) {
+      source.resume();
+    }
+  }
+
+  dest.on('drain', ondrain);
+
+  // If the 'end' option is not supplied, dest.end() will be called when
+  // source gets the 'end' or 'close' events.  Only dest.end() once, and
+  // only when all sources have ended.
+  if (!dest._isStdio && (!options || options.end !== false)) {
+    dest._pipeCount = dest._pipeCount || 0;
+    dest._pipeCount++;
+
+    source.on('end', onend);
+    source.on('close', onclose);
+  }
+
+  var didOnEnd = false;
+  function onend() {
+    if (didOnEnd) return;
+    didOnEnd = true;
+
+    dest._pipeCount--;
+
+    // remove the listeners
+    cleanup();
+
+    if (dest._pipeCount > 0) {
+      // waiting for other incoming streams to end.
+      return;
+    }
+
+    dest.end();
+  }
+
+
+  function onclose() {
+    if (didOnEnd) return;
+    didOnEnd = true;
+
+    dest._pipeCount--;
+
+    // remove the listeners
+    cleanup();
+
+    if (dest._pipeCount > 0) {
+      // waiting for other incoming streams to end.
+      return;
+    }
+
+    dest.destroy();
+  }
+
+  // don't leave dangling pipes when there are errors.
+  function onerror(er) {
+    cleanup();
+    if (this.listeners('error').length === 0) {
+      throw er; // Unhandled stream error in pipe.
+    }
+  }
+
+  source.on('error', onerror);
+  dest.on('error', onerror);
+
+  // remove all the event listeners that were added.
+  function cleanup() {
+    source.removeListener('data', ondata);
+    dest.removeListener('drain', ondrain);
+
+    source.removeListener('end', onend);
+    source.removeListener('close', onclose);
+
+    source.removeListener('error', onerror);
+    dest.removeListener('error', onerror);
+
+    source.removeListener('end', cleanup);
+    source.removeListener('close', cleanup);
+
+    dest.removeListener('end', cleanup);
+    dest.removeListener('close', cleanup);
+  }
+
+  source.on('end', cleanup);
+  source.on('close', cleanup);
+
+  dest.on('end', cleanup);
+  dest.on('close', cleanup);
+
+  dest.emit('pipe', source);
+
+  // Allow for unix-like usage: A.pipe(B).pipe(C)
+  return dest;
+};
+
+});
+
 require.define("udplib",function(require,module,exports,__dirname,__filename,process,global){var util = require('./iputil');
 var enet = require('enet');
 
@@ -23938,7 +24262,7 @@ function getSelf(arg) {
     if(!self.mode) self.mode = MODE.LISTENER; //default operating mode
     
     self.state = STATE.offline; //start in offline state
-    if (!self.seeds) self.seeds = ['178.79.135.146:42424', '208.68.163.247:42424'];
+    if (!self.seeds) self.seeds = ['178.79.135.146:42424', '178.79.135.146:42425'];
 
     //detect local interfaces    
     var localifs = util.getLocalIP();
