@@ -1,4 +1,7 @@
 #!/bin/bash
+	cd ./node-browserify
+	git pull
+	cd ../
 	mkdir -p chrome/tmp/
 	mkdir -p build/chrome/
 	cp deps/otr4-em/lib/*.js chrome/tmp/

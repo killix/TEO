@@ -1,4 +1,7 @@
 #!/bin/bash
+cd node-browserify/
+git pull
+cd ../
 mkdir -p titanium/tmp/
 mkdir -p build/titanium/
 cp deps/enet/lib/enet.js titanium/tmp/
