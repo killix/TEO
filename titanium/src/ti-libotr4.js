@@ -121,6 +121,9 @@ var libotr4js = module.exports = {
     message_respond_smp : function(){return otrModule.CallOtrlMessageRespondSmp.apply(otrModule,arguments);},
     message_abort_smp : function(){return otrModule.CallOtrlMessageAbortSmp.apply(otrModule,arguments);},
     message_symkey : function(){return otrModule.CallOtrlMessageSymkey.apply(otrModule,arguments);},
+    message_poll_get_default_interval : function(){return otrModule.CallOtrlMessagePollGetDefaultInterval.apply(otrModule,arguments);},
+    message_poll : function(){return otrModule.CallOtrlMessagePoll.apply(otrModule,arguments);},
+
     instag_find : function(){return otrModule.CallOtrlInstagFind.apply(otrModule,arguments);},
     instag_read : function(){return otrModule.CallOtrlInstagRead.apply(otrModule,arguments);},
     instag_write: function(){return otrModule.CallOtrlInstagWrite.apply(otrModule,arguments);},
