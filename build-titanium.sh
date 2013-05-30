@@ -13,7 +13,7 @@ node node-browserify/bin/cmd.js titanium/src/index.js \
                -i ti.udp \
                -i tiotrmodule \
                -r ./titanium/tmp/async.js:async \
-               -r ./titanium/tmp/seedrandom.js:seedrandom.js \
+               -r ./titanium/tmp/salsa20.js:salsa20.js \
                -r ./titanium/tmp/bigint.js:bigint.js \
                -r ./titanium/tmp/libotr4.js:libotr4.js \
                -r ./titanium/tmp/libotr-js-bindings.js:libotr-js-bindings.js \

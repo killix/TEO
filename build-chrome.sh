@@ -15,7 +15,7 @@
                -r ./chrome/tmp/dgram-chrome.js:dgram \
                -r ./chrome/tmp/enet.js:enet \
                -r ./chrome/tmp/async.js:async \
-               -r ./chrome/tmp/seedrandom.js:seedrandom.js \
+               -r ./chrome/tmp/salsa20.js:salsa20.js \
                -r ./chrome/tmp/bigint.js:bigint.js \
                -r ./chrome/tmp/libotr4.js:libotr4.js \
                -r ./chrome/tmp/libotr-js-bindings.js:libotr-js-bindings.js \
