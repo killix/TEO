@@ -529,6 +529,10 @@ UDPSocket.prototype.address = function(){
     return({address:this.__local_address,port:this.__local_port});
 };
 
+UDPSocket.prototype.setBroadcast = function(flag){
+    //do chrome udp sockets support broadcast?
+};
+
 UDPSocket.prototype.send = function(buff, offset, length, port, address, callback){
     var self = this;
     var job = {
@@ -106968,28 +106972,21 @@ function OTRL_MSGEVENT(e){
 
 require.define("os",function(require,module,exports,__dirname,__filename,process,global){var interfaces;
 
-
-
-exports.networkInterfaces=function(){
-
-    if(interfaces) return interfaces;
-
-    interfaces = {};
-
+exports.networkInterfaces=function(callback){
+    if(interfaces) {
+        if(callback) callback(interfaces);
+        return interfaces;
+    }
+    
+    //getNetworkList in chrome is Async!
     chrome.socket.getNetworkList(function(list){
-
+        interfaces = {};        
         list.forEach(function(addr){
-
             if(!interfaces[addr.name]) interfaces[addr.name]=[];
-
             interfaces[addr.name].push({'address':addr.address,'family':'IPv4'});
-
         });
-
+        if(callback) callback(interfaces);
     });
-
-    return interfaces;
-
 }
 
 });
@@ -108542,21 +108539,28 @@ function nextGUID(){
 
 });
 
-require.define("/exports.js",function(require,module,exports,__dirname,__filename,process,global){var os = require("os");
-os.networkInterfaces();
+require.define("/exports.js",function(require,module,exports,__dirname,__filename,process,global){var util = require("util");
+var events = require("events");
 
-//called from the browser to import objects
-IMPORT_BUNDLE = function(){
-    this.Buffer = require("buffer").Buffer;
-    this.require = require;  //browserify's require exported to global object
+function TeoObject(){
+    events.EventEmitter.call(this);
+}
+util.inherits(TeoObject,events.EventEmitter);
+
+//loads the bundle and inserts 
+LOAD_BUNDLE = function(window){
+    window.Buffer = require("buffer").Buffer;
+    window.require = require;  //browserify's require exported to global object
+    var TEO = new TeoObject();
+    require("os").networkInterfaces(function(interfaces){
+        //when interfaces are detected, TEO is ready to be used.
+        TEO.telehash = require("telehash");
+        TEO.enet = require("enet");
+        TEO.otr = require("otr");
+        TEO.emit("loaded");
+    });
+    return TEO;
 };
-
-//TEO namespace
-TEO = {};
-
-TEO.telehash = require("telehash");
-TEO.enet = require("enet");
-TEO.otr = require("otr");
 
 });
 require("/exports.js");
