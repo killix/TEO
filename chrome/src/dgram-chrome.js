@@ -128,6 +128,7 @@ function send_datagram(job){
     data = buffer2arrayBuffer(buff);
     chrome_socket.sendTo(job.socket_id,data,job.address,job.port,function(result){
         var err;
+        if(result.bytesWritten < data.byteLength ) err = 'truncation-error';
         if(result.bytesWritten < 0 ) err = 'send-error';
         if(job.callback) job.callback(err,result.bytesWritten);
     });
