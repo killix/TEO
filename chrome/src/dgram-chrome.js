@@ -90,6 +90,10 @@ UDPSocket.prototype.address = function(){
     return({address:this.__local_address,port:this.__local_port});
 };
 
+UDPSocket.prototype.setBroadcast = function(flag){
+    //do chrome udp sockets support broadcast?
+};
+
 UDPSocket.prototype.send = function(buff, offset, length, port, address, callback){
     var self = this;
     var job = {
