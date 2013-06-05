@@ -14,18 +14,20 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
   http://developer.chrome.com/apps/socket.html
 */
 
-var dgram = module.exports;
-
 var events = require('events');
 var util = require('util');
 var Buffer = require('buffer').Buffer;
 
+var chrome_socket = chrome.socket || chrome.experimental.socket;
+if(!chrome_socket){
+    console.log("Warning: Browser missing chrome.socket API");
+}
+
 util.inherits(UDPSocket, events.EventEmitter);
 
-dgram.createSocket = function (type, message_event_callback){
+module.exports.createSocket = function (type, message_event_callback){
     if(type!=='udp4' && type!=='udp6') throw('Invalid UDP socket type');
-    var socket = new UDPSocket(message_event_callback);
-    return socket;
+    return new UDPSocket(message_event_callback);
 }
 
 function UDPSocket(msg_evt_cb){
@@ -48,7 +50,7 @@ function UDPSocket(msg_evt_cb){
 
     function do_recv(){
         if(!self.__socket_id) return;
-        chrome.socket.recvFrom(self.__socket_id, undefined, function(info){
+        chrome_socket.recvFrom(self.__socket_id, undefined, function(info){
             var buff;
             //todo - set correct address family
             //todo - error detection.
@@ -63,7 +65,7 @@ function UDPSocket(msg_evt_cb){
 UDPSocket.prototype.close = function(){
     //Close the underlying socket and stop listening for data on it.
     if(!self.__socket_id) return;
-    chrome.socket.destroy(self.__socket_id);
+    chrome_socket.destroy(self.__socket_id);
     clearInterval(self.__poll_interval);
     delete self.__poll_interval;
 };
@@ -74,10 +76,10 @@ UDPSocket.prototype.bind = function(port,address){
     port = port || 0;
     if(self.__socket_id || self.__bound ) return;//only bind once!
     self.__bound = true;
-    chrome.socket.create('udp',{},function(socketInfo){
+    chrome_socket.create('udp',{},function(socketInfo){
         self.__socket_id = socketInfo.socketId;
-        chrome.socket.bind(self.__socket_id,address,port,function(result){
-            chrome.socket.getInfo(self.__socket_id,function(info){
+        chrome_socket.bind(self.__socket_id,address,port,function(result){
+            chrome_socket.getInfo(self.__socket_id,function(info){
               self.__local_address = info.localAddress;
               self.__local_port = info.localPort;
               self.emit("listening");
@@ -124,9 +126,10 @@ function send_datagram(job){
         buff = job.buff.slice(job.offset,job.offset+job.length);
     }
     data = buffer2arrayBuffer(buff);
-    chrome.socket.sendTo(job.socket_id,data,job.address,job.port,function(result){
-        //result.bytesWritten bytes sent..
-        if(job.callback) job.callback();
+    chrome_socket.sendTo(job.socket_id,data,job.address,job.port,function(result){
+        var err;
+        if(result.bytesWritten < 0 ) err = 'send-error';
+        if(job.callback) job.callback(err,result.bytesWritten);
     });
 }
 
