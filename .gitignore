@@ -1,4 +1,4 @@
 node-browserify/
-chrome/tmp/
-titanium/tmp/
-otr4-browserified/tmp/
+chrome/tmp
+titanium/tmp
+otr4-browserified/tmp
