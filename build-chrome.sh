@@ -5,17 +5,17 @@
 	mkdir -p chrome/tmp/
 	mkdir -p build/chrome/
 	cp deps/otr4-em/lib/*.js chrome/tmp/
-	cp deps/otr4-em/lib/libotr4-chrome.js chrome/tmp/libotr4.js
 	cp deps/enet/lib/enet.js chrome/tmp/
 	cp deps/telehash/lib/v1/*.js chrome/tmp/
 	cp chrome/src/dgram-chrome.js chrome/tmp/
+	cp chrome/src/net-chrome.js chrome/tmp/
 	cp chrome/src/exports.js chrome/tmp/
 	cp chrome/src/os-chrome.js chrome/tmp/os.js
 	node node-browserify/bin/cmd.js chrome/tmp/exports.js \
                -r ./chrome/tmp/dgram-chrome.js:dgram \
+               -r ./chrome/tmp/net-chrome.js:net \
                -r ./chrome/tmp/enet.js:enet \
                -r ./chrome/tmp/async.js:async \
-               -r ./chrome/tmp/salsa20.js:salsa20.js \
                -r ./chrome/tmp/bigint.js:bigint.js \
                -r ./chrome/tmp/libotr4.js:libotr4.js \
                -r ./chrome/tmp/libotr-js-bindings.js:libotr-js-bindings.js \
