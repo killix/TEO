@@ -4,7 +4,13 @@
   "description":"TEO network stack in chrome.",
   "version":"0.1",
   "permissions":[
-	{"socket": ["udp-send-to:*:*","udp-bind"]}
+	{
+      "socket": [
+        "udp-send-to:*:*",
+        "udp-bind",
+        "tcp-connect:*:*",
+        "tcp-listen::*"]
+    }
   ],
   "app":{
 	"background":{
