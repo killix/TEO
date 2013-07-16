@@ -2805,22 +2805,21 @@ var libotr4js = module.exports = {
         OtrlConnContext = F.OtrlConnContext;
         OpsEvent = F.OpsEvent;
   },
-  malloc      : function(){return otrModule.CallMalloc.apply(otrModule,arguments);},
-  free        : function(){return otrModule.CallFree.apply(otrModule,arguments);},
+  _malloc      : function(){return otrModule.CallMalloc.apply(otrModule,arguments);},
+  _free        : function(){return otrModule.CallFree.apply(otrModule,arguments);},
   getValue    : getValue,
   setValue    : setValue,
   Pointer_stringify : function(){return otrModule.CallStringify.apply(otrModule,arguments);},
 
-  helper: {
-    mpi2bigint : mpi2bigint,
-    bigint2mpi : bigint2mpi,
-    ptr_to_ArrayBuffer : ptr_to_ArrayBuffer,
-    ptr_to_HexString : ptr_to_HexString,
-    unsigned_char : unsigned_char,
-    unsigned_int32 : unsigned_int32,
-    str2ab :    str2ab,
-    ab2str : ab2str
-  },
+  mpi2bigint : mpi2bigint,
+  bigint2mpi : bigint2mpi,
+  ptr_to_ArrayBuffer : ptr_to_ArrayBuffer,
+  ptr_to_HexString : ptr_to_HexString,
+  unsigned_char : unsigned_char,
+  unsigned_int32 : unsigned_int32,
+  str2ab :    str2ab,
+  ab2str : ab2str,
+
   libotrl:{
     version : function(){return otrModule.CallOtrlVersion.apply(otrModule,arguments);},
     userstate_create : function(){return otrModule.CallOtrlUserstateCreate.apply(otrModule,arguments);},
