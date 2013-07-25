@@ -1,5 +1,5 @@
-var iputil = require('iputil');
-//var Buffer = require("buffer").Buffer;
+var iputil = require("iputil");
+var Buffer = require("buffer").Buffer;
 var events = require("events");
 var util = require("util");
 
@@ -14,17 +14,15 @@ exports.createSocket =function(type, incoming){
 function DGram(incoming){
 	var self = this;
     events.EventEmitter.call(this);
-
+    if(typeof incoming === "function") self.on("message",incoming);
 	this.socket = UDP.createSocket();
 	this.socket.addEventListener('data', function(evt){
 		//console.log(JSON.stringify(evt));
 		//console.log("INCOMING PACKET:"+new Buffer(evt.bytesData).toString());
 		//console.log("INCOMING PACKET LENGTH:"+evt.bytesData.length);
-		incoming(
-            new Buffer(evt.bytesData),
-			{address:iputil.IP(evt.address.substr(1)), port:iputil.PORT(evt.address.substr(1))}
-			//{address:iputil.IP(evt.address), port:iputil.PORT(evt.address)}
-		);
+        var msg = new Buffer(evt.bytesData);
+        var rinfo = {address:iputil.IP(evt.address.substr(1)),port:iputil.PORT(evt.address.substr(1))};
+        self.emit("message",msg,rinfo);
 	});
 	this.socket.addEventListener('error', function (evt) {
     	console.log(JSON.stringify(evt));
@@ -64,6 +62,10 @@ DGram.prototype.address = function(){
         port:this._port,
         address:this._address
     });
+};
+
+DGram.prototype.setBroadcast = function(){
+
 };
 
 function buffer2Array(buff){
