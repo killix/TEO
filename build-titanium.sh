@@ -9,9 +9,11 @@ cp deps/otr4-em/lib/*.js titanium/tmp/
 cp deps/telehash/lib/v1/*.js titanium/tmp/
 cp titanium/src/ti-libotr4.js titanium/tmp/libotr4.js
 cp titanium/src/os-titanium.js titanium/tmp/os.js
+cp titanium/src/ws.js titanium/tmp/ws.js
 node node-browserify/bin/cmd.js titanium/src/index.js \
                -i ti.udp \
                -i tiotrmodule \
+               -r ./titanium/tmp/ws.js:ws \
                -r ./titanium/tmp/async.js:async \
                -r ./titanium/tmp/bigint.js:bigint.js \
                -r ./titanium/tmp/libotr4.js:libotr4.js \

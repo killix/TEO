@@ -11,7 +11,9 @@
 	cp chrome/src/net-chrome.js chrome/tmp/
 	cp chrome/src/exports.js chrome/tmp/
 	cp chrome/src/os-chrome.js chrome/tmp/os.js
+	cp chrome/src/ws.js chrome/tmp/ws.js
 	node node-browserify/bin/cmd.js chrome/tmp/exports.js \
+               -r ./chrome/tmp/ws.js:ws \
                -r ./chrome/tmp/dgram-chrome.js:dgram \
                -r ./chrome/tmp/net-chrome.js:net \
                -r ./chrome/tmp/enet.js:enet \
